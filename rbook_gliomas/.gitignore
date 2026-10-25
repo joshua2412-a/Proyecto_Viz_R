@@ -1,0 +1,10 @@
+.Rproj.user
+.Rhistory
+.RData
+_book
+_bookdown_files
+_main.Rmd
+_main_files
+packages.bib
+rsconnect
+rbook_gliomas_files

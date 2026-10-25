@@ -1,0 +1,4 @@
+modelo,balanceo,metodo,auc_media,auc_de,hiperparametros
+logistica,ninguno,grid,0.9194398463001004,0.038419787457861,"{""C"": 0.5337, ""penalty"": ""l1""}"
+random_forest,adasyn,bayesiano,0.9207226454730992,0.0391714797459338,"{""max_depth"": 10, ""min_samples_leaf"": 4, ""max_features"": 0.2404}"
+xgboost,ninguno,bayesiano,0.9220694308716088,0.0384021533500253,"{""max_depth"": 2, ""learning_rate"": 0.0673, ""n_estimators"": 156, ""min_child_weight"": 1.1932, ""subsample"": 0.9859, ""colsample_bytree"": 0.6916, ""reg_lambda"": 0.752}"

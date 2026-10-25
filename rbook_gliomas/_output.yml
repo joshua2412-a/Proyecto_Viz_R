@@ -1,0 +1,13 @@
+bookdown::gitbook:
+  css: style.css
+  includes:
+    in_header: header.html
+  config:
+    toc:
+      before: |
+        <li><a href="./">Caracterización Clínico-Molecular del Grado Tumoral en Gliomas</a></li>
+      after: |
+        <li><a href="https://github.com/rstudio/bookdown" target="blank">Publicado con bookdown</a></li>
+    edit: https://github.com/joshua2412-a/Proyecto_Viz_R/edit/main/rbook_gliomas/%s
+    download: null
+    sharing: null

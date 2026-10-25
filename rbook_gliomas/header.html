@@ -1,0 +1,40 @@
+<style>
+  details.codigo { margin: 0 0 1em; }
+  details.codigo > summary { cursor: pointer; font-size: 13px; color: #1f77b4; padding: 4px 0; }
+  details.codigo > summary:hover { text-decoration: underline; }
+</style>
+<script>
+  function plegarCodigo() {
+    document.querySelectorAll("div.sourceCode").forEach(function (bloque) {
+      var pre = bloque.querySelector("pre");
+      if (!pre || !pre.classList.contains("fold-hide")) return;
+      if (bloque.parentNode.classList.contains("codigo")) return;
+      var d = document.createElement("details");
+      d.className = "codigo";
+      var s = document.createElement("summary");
+      s.textContent = "Ver código";
+      d.appendChild(s);
+      bloque.parentNode.insertBefore(d, bloque);
+      d.appendChild(bloque);
+    });
+  }
+  // Quita el prefijo "Table x.y:" que bookdown antepone a los títulos de las
+  // tablas, de modo que solo quede el título propio de cada una.
+  function quitarNumeroTablas() {
+    var prefijo = /^\s*(Table|Tabla)\s+[\d.A-Z]+:\s*/;
+    document.querySelectorAll("caption").forEach(function (caption) {
+      var recorrido = document.createTreeWalker(caption, NodeFilter.SHOW_TEXT);
+      var nodo;
+      while ((nodo = recorrido.nextNode())) {
+        nodo.textContent = nodo.textContent.replace(prefijo, "");
+        if (nodo.textContent.trim() !== "") break;
+      }
+    });
+  }
+  function ajustarPagina() { plegarCodigo(); quitarNumeroTablas(); }
+  document.addEventListener("DOMContentLoaded", ajustarPagina);
+  window.addEventListener("load", function () {
+    ajustarPagina();
+    if (window.gitbook && gitbook.events) gitbook.events.bind("page.change", ajustarPagina);
+  });
+</script>

@@ -1,0 +1,14 @@
+book_filename: "rbook_gliomas"
+language:
+  label:
+    fig: "Figura "
+    tab: "Tabla "
+  ui:
+    chapter_name: "Capítulo "
+delete_merged_file: true
+output_dir: "../docs"
+
+rmd_files:
+  - index.Rmd
+  - 01-EDA.Rmd
+  - 02-Modelado.Rmd

@@ -1,0 +1,1430 @@
+# Análisis exploratorio de variables clínicas y mutacionales asociadas a la clasificación histológica (LGG vs. GBM) {#intro}
+
+El presente análisis exploratorio busca caracterizar las diferencias clínicas y moleculares entre los pacientes con Gliomas de Bajo Grado (LGG) y Glioblastoma Multiforme (GBM), con especial atención a las variables que puedan estar asociadas con el grado histológico del tumor. Para ello, se examinan tanto características clínicas como patrones de mutación en genes seleccionados, con el propósito de identificar comportamientos relevantes dentro de los datos antes de avanzar hacia las etapas de preprocesamiento y modelado.
+
+El análisis parte del conjunto de datos Glioma Grading Clinical and Mutation Features, construido a partir de información de los proyectos TCGA-LGG y TCGA-GBM de *The Cancer Genome Atlas*. El conjunto contiene registros de pacientes y variables clínicas y genéticas, teniendo como variable objetivo la clasificación binaria del grado tumoral entre LGG y GBM.
+
+A lo largo de esta sección se estudiará la estructura general de los datos, la distribución de las variables, sus características clínicas y mutacionales y su comportamiento en función del grado tumoral. Estos resultados permitirán establecer una primera comprensión del conjunto de datos y servirán como base para definir posteriormente las transformaciones y variables utilizadas en el desarrollo del modelo predictivo.
+
+```{r setup-eda, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = TRUE,
+  warning    = FALSE,
+  message    = FALSE,
+  fig.align  = "center",
+  fig.width  = 7,
+  fig.height = 5,
+  dpi        = 120
+)
+
+# Las tablas se generan siempre en HTML: así kableExtra no pasa por el formato
+# "pipe" de knitr, que escapa el carácter | como &#124; y lo deja visible.
+options(knitr.table.format = "html")
+```
+
+## Carga de datos y Estructura
+
+### Librerías
+
+```{r librerias-eda, class.source = "fold-hide"}
+# Librerías
+## Manipulación de datos
+library(tidyverse)   # dplyr, tidyr, purrr, ggplot2, stringr
+library(scales)      # formato de ejes y porcentajes
+
+## Tablas
+library(knitr)
+library(kableExtra)
+
+## Visualización
+library(patchwork)   # composición de gráficos en grilla
+
+# Configuración visual
+PALETTE_GRADE <- c("0" = "#2E86AB", "1" = "#C1443C")
+
+theme_set(
+  theme_minimal(base_size = 12) +
+    theme(
+      panel.grid.minor = element_blank(),
+      plot.title       = element_text(hjust = 0.5)
+    )
+)
+
+# Convierte un ggplot en una imagen PNG embebida (base64), para poder
+# insertarlo dentro de bloques HTML como en el notebook de Python.
+ggplot_a_base64 <- function(p, width, height, dpi = 120) {
+  archivo <- tempfile(fileext = ".png")
+  ggsave(archivo, p, width = width, height = height, dpi = dpi, bg = "white")
+  knitr::image_uri(archivo)
+}
+
+# Asimetría y curtosis (exceso) con los mismos estimadores que pandas
+# (Series.skew() y Series.kurt()).
+asimetria <- function(x) {
+  n <- length(x); m <- mean(x)
+  g1 <- mean((x - m)^3) / mean((x - m)^2)^1.5
+  g1 * sqrt(n * (n - 1)) / (n - 2)
+}
+
+curtosis <- function(x) {
+  n <- length(x); m <- mean(x)
+  g2 <- mean((x - m)^4) / mean((x - m)^2)^2 - 3
+  ((n + 1) * g2 + 6) * (n - 1) / ((n - 2) * (n - 3))
+}
+
+# Formato numérico en español (coma decimal) para tablas y texto
+num <- function(x, d = 2) {
+  formatC(unname(x), format = "f", digits = d, big.mark = ".", decimal.mark = ",")
+}
+num_p <- function(p) {
+  if (p < 1e-4) sub(".", ",", formatC(p, format = "e", digits = 2), fixed = TRUE) else num(p, 4)
+}
+
+# Tabla de resultados con el estilo común del libro (encabezado azul)
+tabla_resultado <- function(df, caption, align = NULL, full_width = FALSE) {
+  kable(df, format = "html", align = align, row.names = FALSE,
+        caption = sprintf("<b>%s</b>", caption)) |>
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = full_width) |>
+    row_spec(0, background = "#1f77b4", color = "white", bold = TRUE)
+}
+si_no <- function(x) if_else(x, "Sí", "No")
+```
+
+### Dataset
+
+El conjunto de datos utilizado para el análisis es `TCGA_InfoWithGrade.csv`,
+correspondiente a una versión preprocesada de los datos relacionados con
+gliomas del proyecto The Cancer Genome Atlas (TCGA).
+
+```{r dataset-eda}
+df_mutations <- read_csv("dataset/TCGA_InfoWithGrade.csv", show_col_types = FALSE)
+
+kable(head(df_mutations)) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = TRUE, font_size = 12) |>
+  scroll_box(width = "100%")
+```
+
+```{r dataset-tail-eda}
+kable(tail(df_mutations)) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = TRUE, font_size = 12) |>
+  scroll_box(width = "100%")
+```
+
+### Estructura
+
+```{r estructura-eda}
+n_pacientes  <- nrow(df_mutations)
+n_variables  <- ncol(df_mutations)
+n_duplicados <- sum(duplicated(df_mutations))
+n_faltantes  <- sum(is.na(df_mutations))
+
+resumen_general <- tibble(
+  Indicador = c("Pacientes (registros)", "Variables",
+                "Registros duplicados", "Valores faltantes"),
+  Valor     = c(n_pacientes, n_variables, n_duplicados, n_faltantes),
+  Detalle   = c("Una fila por paciente",
+                "1 cuantitativa (Age_at_diagnosis) y 23 categóricas",
+                sprintf("%.2f%% de los registros", 100 * n_duplicados / n_pacientes),
+                sprintf("%.0f%% de completitud",
+                        100 * (1 - n_faltantes / (n_pacientes * n_variables))))
+)
+
+kable(resumen_general, caption = "Resumen general del dataset",
+      align = c("l", "r", "l")) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE) |>
+  column_spec(1, bold = TRUE) |>
+  column_spec(2, bold = TRUE, color = "#1E5F8C")
+```
+
+```{r info-df-eda}
+info_df <- tibble(
+  Columna            = names(df_mutations),
+  `Tipo de dato`     = map_chr(df_mutations, ~ class(.x)[1]),
+  `Valores no nulos` = map_int(df_mutations, ~ sum(!is.na(.x))),
+  `Valores nulos`    = map_int(df_mutations, ~ sum(is.na(.x))),
+  `Valores únicos`   = map_int(df_mutations, ~ n_distinct(.x))
+)
+
+kable(info_df, caption = "Resumen Estructural del Dataset") |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE) |>
+  column_spec(1, bold = TRUE) |>
+  column_spec(5, color = "white",
+              background = spec_color(info_df$`Valores únicos`, end = 0.8,
+                                      option = "D", direction = -1))
+```
+
+```{r recodificacion-eda}
+columnas_categoricas <- setdiff(names(df_mutations), "Age_at_diagnosis")
+
+df_mutations <- df_mutations |>
+  mutate(across(all_of(columnas_categoricas), as.factor))
+
+kable(t(map_chr(df_mutations, ~ class(.x)[1])), row.names = FALSE) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), font_size = 11) |>
+  scroll_box(width = "100%")
+```
+
+El conjunto de datos presenta una estructura limpia y estructurada, compuesta por 839 registros (pacientes) y 24 variables, sin presencia de valores nulos o faltantes. Aunque se presente un registro duplicado, este representa a dos pacientes distintos que casualmente comparten el mismo fenotipo y perfil genético, ya que su ID es distinto en el dataset original (`TCGA_GBM_LGG_Mutations_all`).
+
+Las variables binarias, originalmente codificadas mediante valores enteros `0` y `1`, fueron transformadas al tipo categórico (`factor`) para representar adecuadamente su naturaleza y facilitar su análisis exploratorio.
+
+## Contexto de los datos
+
+| Categoría | Variables | Codificación |
+|---|---|---|
+| **Variable objetivo** | `Grade` | 0 = LGG (glioma de bajo grado), 1 = GBM (glioblastoma) |
+| **Demográficas** | `Gender`, `Age_at_diagnosis`, `Race` | `Gender`: 0/1; `Race`: 0–3 (categorías étnicas codificadas); `Age`: continua (años) |
+| **Mutacionales** | 20 genes (`IDH1`, `TP53`, `ATRX`, `PTEN`, `EGFR`, `CIC`, `MUC16`, `PIK3CA`, `NF1`, `PIK3R1`, `FUBP1`, `RB1`, `NOTCH1`, `BCOR`, `CSMD3`, `SMARCA4`, `GRIN2A`, `IDH2`, `FAT4`, `PDGFRA`) | 0 = no mutado, 1 = mutado |
+
+### Variable Objetivo
+
+- **`Grade`**: Indica el grado del glioma (0 = `LGG`, 1 = `GBM`). Esta variable distingue entre los dos grupos principales del conjunto de datos: Glioma de Bajo Grado (*Low-Grade Glioma*) y Glioblastoma Multiforme (*Glioblastoma Multiforme*).
+
+---
+
+### Variables Clínicas
+
+Proporcionan información sobre las características demográficas de los pacientes:
+
+- **`Gender`**: Género del paciente (0 = masculino, 1 = femenino).
+- **`Age_at_diagnosis`**: Edad del paciente al momento del diagnóstico expresada en años (numérica continua). La parte decimal incorpora la información exacta de los días transcurridos.
+- **`Race`**: Raza reportada del paciente codificada del 0 al 3 (0 = *White*, 1 = *Black or African American*, 2 = *Asian*, 3 = *American Indian or Alaska Native*).
+
+---
+
+
+### Variables genéticas
+
+El conjunto de datos también contiene variables correspondientes a
+diferentes genes. Estas variables están codificadas de forma binaria,
+indicando con un valor de 1 la presencia de una mutación en el gen
+correspondiente, y con un 0 la condición de gen salvaje / no mutado (*wildtype*):
+
+- **`IDH1`**: Codifica una enzima involucrada en el metabolismo celular.
+
+- **`TP53`**: Gen supresor tumoral que participa en el control del ciclo celular y en la respuesta al daño del ADN. Sus alteraciones favorecen la proliferación tumoral.
+
+- **`ATRX`**: Participa en el mantenimiento de la estructura de la
+  cromatina y en la estabilidad del genoma.
+
+- **`PTEN`**: Gen supresor tumoral que regula vías relacionadas con el
+  crecimiento y la supervivencia celular.
+
+- **`EGFR`**: Codifica un receptor involucrado en señales de crecimiento y proliferación celular.
+
+- **`CIC`**: Participa en la regulación de la expresión de otros genes y en procesos relacionados con el desarrollo celular.
+
+- **`MUC16`**: Codifica una proteína de gran tamaño asociada a la
+  superficie celular.
+
+- **`PIK3CA`**: Participa en la vía de señalización PI3K/AKT, relacionada con crecimiento, supervivencia y proliferación celular.
+
+- **`NF1`**: Actúa como regulador negativo de señales relacionadas con el crecimiento celular. Sus alteraciones pueden contribuir a la proliferación tumoral.
+
+- **`PIK3R1`**: Codifica una subunidad reguladora de la vía PI3K, que
+  interviene en procesos de crecimiento y supervivencia celular.
+
+- **`FUBP1`**: Participa en la regulación de la expresión génica y del
+  crecimiento celular.
+
+- **`RB1`**: Gen supresor tumoral que participa en el control del ciclo celular y regula la progresión de las células hacia la división.
+
+- **`NOTCH1`**: Forma parte de la vía de señalización Notch, relacionada con la diferenciación, proliferación y supervivencia celular.
+
+- **`BCOR`**: Participa en la regulación de la expresión génica mediante complejos relacionados con la cromatina.
+
+- **`CSMD3`**: Codifica una proteína de gran tamaño y se encuentra entre los genes que pueden presentar mutaciones en distintos tumores.
+
+- **`SMARCA4`**: Participa en la remodelación de la cromatina y, por
+  tanto, en la regulación de la expresión de los genes.
+
+- **`GRIN2A`**: Codifica una subunidad de un receptor de glutamato,
+  relacionado principalmente con la señalización neuronal.
+
+- **`IDH2`**: Codifica una enzima metabólica relacionada con IDH1.
+
+- **`FAT4`**: Participa en procesos relacionados con la organización,
+  adhesión y crecimiento de las células.
+
+- **`PDGFRA`**: Codifica un receptor involucrado en señales de
+  crecimiento y proliferación celular.
+
+---
+
+El dataset está compuesto por 24 variables en total:
+
+* **Variable Objetivo (Target):** `Grade` (binaria: 0 = LGG, 1 = GBM).
+* **21 atributos binarios (0/1):** `Gender` y las 20 mutaciones genéticas evaluadas.
+* **1 atributo categórico politómico:** `Race` (codificada en 4 niveles).
+* **1 atributo continuo:** `Age_at_diagnosis` (`numeric`, expresada en años).
+
+El objetivo a resolver es predecir la severidad del glioma en pacientes, clasificándolos entre Glioma de Bajo Grado (LGG) y Glioblastoma Multiforme (GBM) a partir de sus características clínicas y perfil de mutaciones genéticas.
+
+## División del dataset - Protocolo Anti-Leakage
+
+```{r grade-full-plot-eda, fig.width=5.5, fig.height=4.5}
+conteo <- df_mutations |>
+  count(Grade) |>
+  mutate(pct = n / sum(n) * 100,
+         Grade = factor(Grade, levels = c(0, 1), labels = c("LGG (0)", "GBM (1)")))
+
+ggplot(conteo, aes(x = Grade, y = n)) +
+  geom_col(width = 0.55, fill = PALETTE_GRADE[["0"]], color = "white", linewidth = 1.2) +
+  geom_text(aes(label = sprintf("%d\n(%.1f%%)", n, pct)),
+            vjust = -0.3, fontface = "bold", size = 3.8) +
+  scale_y_continuous(limits = c(0, max(conteo$n) * 1.25)) +
+  labs(title = "Distribución de la variable objetivo: Grado tumoral",
+       x = NULL, y = "Número de pacientes") +
+  theme(axis.text.x = element_text(face = "bold", size = 10.5))
+```
+
+La elección de una partición estratificada (Stratified Train-Test Split) se justifica por la necesidad de preservar la proporción original de las clases de la variable objetivo (`Grade`) en ambos subconjuntos de datos. En el dataset completo, la distribución presenta un ligero desbalance (ratio ≈ 1.4:1), donde el 58,05% corresponde a Gliomas de Bajo Grado (LGG) y el 41,95% a Glioblastomas (GBM), una división sin estratificar podría dejar los conjuntos de `train` y `test` sesgados a un solo grupo de la variable `Grade`.
+
+La partición 80/20 estratificada por `Grade` se realizó una única vez en el Jupyter Notebook (`train_test_split` con `random_state = 42`) y se exportó como archivos CSV (`train_data.csv` y `test_data.csv`) para su uso en todo el proyecto. De este modo, se parte exactamente de la misma partición y no existe riesgo de que cada entorno genere una división distinta. Por ello, aquí simplemente se lee ese archivo en lugar de recalcular la partición.
+
+```{r split-eda}
+train_data <- read_csv("dataset/train_data.csv", show_col_types = FALSE)
+columnas_categoricas_train <- setdiff(names(train_data), "Age_at_diagnosis")
+train_data <- train_data |>
+  mutate(across(all_of(columnas_categoricas_train), as.factor))
+
+X_train <- train_data |> select(-Grade)
+y_train <- train_data$Grade
+```
+
+Para asegurar una evaluación rigurosa del modelo y prevenir la fuga de datos, el conjunto original de 839 registros se dividió en una proporción 80/20 mediante una partición estratificada basada en la variable objetivo (`Grade`). De este modo, se reservó un conjunto de prueba (*Test set*) compuesto por 168 pacientes exclusivamente para la validación final del rendimiento, mientras que las 671 observaciones restantes formaron el conjunto de entrenamiento (*Train set*), garantizando que el patrón de distribución de las clases se mantuviera balanceado.
+
+## Análisis Univariado
+
+En esta sección se analiza la distribución individual de las variables del conjunto de datos, con el propósito de caracterizar sus principales patrones y detectar posibles particularidades en sus valores. Para cada variable se examinan medidas descriptivas y la distribución de sus observaciones, considerando aspectos como tendencia central, dispersión y frecuencia de las categorías. Las distribuciones se complementan mediante representaciones gráficas, facilitando la identificación de patrones, valores extremos y posibles anomalías en los datos.
+
+### Variable `Grade` (Target)
+
+```{r grade-train-donut-eda, fig.width=5.5, fig.height=4.5}
+conteo <- tibble(Grade = y_train) |>
+  count(Grade) |>
+  mutate(pct = n / sum(n) * 100,
+         label = sprintf("%s\n%d (%.1f%%)",
+                         c("LGG (0)", "GBM (1)")[as.integer(as.character(Grade)) + 1],
+                         n, pct))
+
+ggplot(conteo, aes(x = 2, y = n, fill = Grade)) +
+  geom_col(width = 0.8, color = "white", linewidth = 1) +
+  geom_text(aes(x = 2.9, label = label), position = position_stack(vjust = 0.5),
+            fontface = "bold", size = 3.6) +
+  coord_polar(theta = "y", start = 0, direction = -1) +
+  xlim(0.6, 3.2) +
+  scale_fill_manual(values = PALETTE_GRADE, guide = "none") +
+  theme_void() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 12)) +
+  labs(title = "Distribución de la variable objetivo: Grado tumoral")
+```
+
+En el conjunto de entrenamiento (671 pacientes), la variable objetivo `Grade` presenta una distribución de 389 casos correspondientes a Gliomas de Bajo Grado (LGG, 58%) y 282 casos a Glioblastoma Multiforme (GBM, 42%). La relación entre clases es aproximadamente de 1,38 a 1, lo que indica que no hay un desbalance severo.
+
+### Variables cuantitativas
+
+#### `Age_at_diagnosis`
+
+```{r age-summary-eda}
+age_series <- train_data$Age_at_diagnosis
+
+summary_age <- tibble(
+  `Métrica Estadística` = c(
+    "Total de Muestras (n)", "Media (μ)", "Desviación Estándar (σ)",
+    "Mínimo", "Primer Cuartil (Q1)", "Mediana (Q2)",
+    "Tercer Cuartil (Q3)", "Máximo", "Rango Intercuartílico (IQR)",
+    "Asimetría (Skewness)", "Curtosis"
+  ),
+  Valor = c(
+    format(length(age_series), big.mark = ","),
+    sprintf("%.2f años", mean(age_series)),
+    sprintf("%.2f años", sd(age_series)),
+    sprintf("%.2f años", min(age_series)),
+    sprintf("%.2f años", quantile(age_series, 0.25)),
+    sprintf("%.2f años", median(age_series)),
+    sprintf("%.2f años", quantile(age_series, 0.75)),
+    sprintf("%.2f años", max(age_series)),
+    sprintf("%.2f años", IQR(age_series)),
+    sprintf("%.4f", asimetria(age_series)),
+    sprintf("%.4f", curtosis(age_series))
+  )
+)
+
+kable(summary_age, align = c("l", "r"),
+      caption = "<b>Resumen Estadístico: Edad al Diagnóstico</b>") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
+  row_spec(0, background = "#1f77b4", color = "white", bold = TRUE) |>
+  column_spec(2, bold = TRUE)
+```
+
+```{r age-hist-box-eda, fig.width=14, fig.height=5}
+ancho_bin <- diff(range(X_train$Age_at_diagnosis)) / 20
+media_edad   <- mean(X_train$Age_at_diagnosis)
+mediana_edad <- median(X_train$Age_at_diagnosis)
+
+p_hist <- ggplot(X_train, aes(x = Age_at_diagnosis)) +
+  geom_histogram(bins = 20, fill = "#2b5c8f", color = "white", alpha = 0.75) +
+  geom_density(aes(y = after_stat(density) * nrow(X_train) * ancho_bin),
+               color = "#2b5c8f", linewidth = 0.9) +
+  geom_vline(aes(xintercept = media_edad,
+                 linetype = sprintf("Media: %.1f", media_edad)), color = "red") +
+  geom_vline(aes(xintercept = mediana_edad,
+                 linetype = sprintf("Mediana: %.1f", mediana_edad)), color = "green") +
+  scale_linetype_manual(values = c("dashed", "solid"), name = NULL) +
+  labs(title = "Distribución de Edad al Diagnóstico (Train Set)",
+       x = "Edad (Años)", y = "Frecuencia") +
+  theme(plot.title = element_text(face = "bold"),
+        legend.position = c(0.88, 0.9))
+
+p_box <- ggplot(X_train, aes(x = Age_at_diagnosis)) +
+  geom_boxplot(fill = "#8da0cb", width = 0.5) +
+  labs(title = "Boxplot de Edad (Detección de Outliers)", x = "Edad (Años)", y = NULL) +
+  theme(plot.title = element_text(face = "bold"),
+        axis.text.y = element_blank())
+
+p_hist + p_box
+```
+
+La variable registra una media de 51,10 años ($\pm 15,63$ años), mientras que el 50 % de los pacientes presenta una edad inferior o igual a 51,99 años y el otro 50 % una edad superior a este valor. El conjunto de entrenamiento abarca un rango de edad desde los 14,42 hasta los 89,29 años. El análisis exploratorio revela una distribución simétrica con comportamiento bimodal (picos poblacionales cerca de los 35 y 55 años). Este patrón sugiere la presencia de subgrupos demográficos diferenciados que posteriormente se contrastarán con el grado de severidad tumoral (`Grade`).
+
+```{r age-outliers-eda, class.source = "fold-hide"}
+q1  <- quantile(X_train$Age_at_diagnosis, 0.25)
+q3  <- quantile(X_train$Age_at_diagnosis, 0.75)
+iqr <- q3 - q1
+
+limite_inferior <- q1 - 1.5 * iqr
+limite_superior <- q3 + 1.5 * iqr
+
+outliers <- X_train |>
+  filter(Age_at_diagnosis < limite_inferior | Age_at_diagnosis > limite_superior)
+
+edad_min <- min(X_train$Age_at_diagnosis)
+edad_max <- max(X_train$Age_at_diagnosis)
+
+tabla_outliers <- tibble(
+  Medida = c("Primer cuartil (Q1)", "Tercer cuartil (Q3)",
+             "Rango intercuartílico (IQR)",
+             "Límite inferior (Q1 − 1,5 · IQR)", "Límite superior (Q3 + 1,5 · IQR)",
+             "Edad mínima observada", "Edad máxima observada",
+             "Valores atípicos detectados"),
+  Valor  = c(paste(num(c(q1, q3, iqr, limite_inferior, limite_superior,
+                         edad_min, edad_max)), "años"),
+             as.character(nrow(outliers)))
+)
+
+kable(tabla_outliers, align = c("l", "r"),
+      caption = "<b>Detección de valores atípicos: regla de 1,5 × IQR</b>") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
+  row_spec(0, background = "#1f77b4", color = "white", bold = TRUE) |>
+  row_spec(nrow(tabla_outliers), bold = TRUE) |>
+  column_spec(2, bold = TRUE)
+```
+
+Con la regla de Tukey (1,5 × IQR), los límites de corte quedan en `r num(limite_inferior)` y `r num(limite_superior)` años. Todas las edades del conjunto de entrenamiento (de `r num(edad_min)` a `r num(edad_max)` años) caen dentro de ese intervalo, así que se detectan `r nrow(outliers)` valores atípicos entre los `r nrow(X_train)` pacientes. El margen además es amplio: el paciente más joven está a `r num(edad_min - limite_inferior)` años del límite inferior y el de mayor edad a `r num(limite_superior - edad_max)` años del superior. El límite inferior, cercano a cero, no tiene sentido clínico en una cohorte de adultos; solo refleja lo dispersa que es la parte central de la distribución (IQR de `r num(iqr)` años).
+
+En consecuencia, no hay registros que eliminar, corregir o recortar, y la edad puede usarse tal cual en las etapas siguientes. Que no haya atípicos en la distribución global no impide que aparezcan dentro de un grupo: en el análisis bivariado, al separar por `Grade`, los pacientes con GBM más jóvenes sí quedan por debajo del bigote inferior de su grupo.
+
+```{r age-normalidad-eda}
+age_data <- X_train$Age_at_diagnosis
+
+skewness    <- asimetria(age_data)
+kurtosis    <- curtosis(age_data)
+shapiro_res <- shapiro.test(age_data)
+
+tabla_normalidad <- tibble(
+  Medida = c("Asimetría (skewness)", "Curtosis (exceso)",
+             "Shapiro-Wilk: estadístico W", "Shapiro-Wilk: p-valor"),
+  Valor  = c(num(skewness, 4), num(kurtosis, 4),
+             num(shapiro_res$statistic, 4), num_p(shapiro_res$p.value))
+)
+
+kable(tabla_normalidad, align = c("l", "r"),
+      caption = "<b>Evaluación de normalidad: edad al diagnóstico (train)</b>") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
+  row_spec(0, background = "#1f77b4", color = "white", bold = TRUE) |>
+  column_spec(2, bold = TRUE)
+```
+
+```{r age-qqplot-eda, fig.width=6, fig.height=4.5}
+qq <- tibble(
+  teorico  = qnorm(ppoints(length(age_data))),
+  muestral = sort(age_data)
+)
+ajuste <- coef(lm(muestral ~ teorico, data = qq))
+
+ggplot(qq, aes(x = teorico, y = muestral)) +
+  geom_point(color = "#2b5c8f") +
+  geom_abline(intercept = ajuste[1], slope = ajuste[2], color = "red") +
+  labs(title = "QQ-Plot de Normalidad",
+       x = "Theoretical quantiles", y = "Ordered Values") +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+La edad es prácticamente simétrica: con una asimetría de `r num(skewness, 4)`, la media y la mediana casi coinciden. La curtosis en exceso de `r num(kurtosis, 2)` indica una distribución más aplanada que la normal, con colas más ligeras. Aun así, la prueba de Shapiro-Wilk rechaza la normalidad (W = `r num(shapiro_res$statistic, 4)`; p = `r num_p(shapiro_res$p.value)`). El QQ-plot muestra de dónde viene ese rechazo: los puntos siguen la recta en el centro y se separan de ella en los extremos, con la forma de S suave que dejan unas colas más cortas que las de una normal, y no con la curva sostenida que produciría una asimetría fuerte.
+
+Hay dos razones para este resultado. Con n = `r length(age_data)`, la prueba detecta desviaciones pequeñas que tienen poca importancia práctica. Y la distribución es bimodal, con picos cerca de los 35 y los 55 años, algo que una normal no puede reproducir. Por eso, la edad se compara entre grupos con una prueba no paramétrica (Mann–Whitney), y no hace falta transformarla con `log` o `Box-Cox`, porque no tiene asimetría pronunciada ni valores atípicos. Basta con estandarizarla (`scale()`) para los algoritmos sensibles a la escala; los modelos basados en árboles pueden usarla en su escala original.
+
+### Variables cualitativas
+
+#### `Gender`
+
+```{r gender-univ-eda, fig.width=7, fig.height=4}
+# Tabla
+tabla_gender <- train_data |>
+  count(Gender, name = "Frecuencia") |>
+  arrange(desc(Frecuencia)) |>
+  mutate(
+    Porcentaje = round(Frecuencia / sum(Frecuencia) * 100, 2),
+    `Género` = dplyr::recode(as.character(Gender), "0" = "Hombre", "1" = "Mujer")
+  ) |>
+  select(`Género`, Frecuencia, Porcentaje)
+
+# Gráfico
+ggplot(tabla_gender, aes(x = `Género`, y = Frecuencia)) +
+  geom_col(fill = "#1f77b4", width = 0.5) +
+  geom_text(aes(label = sprintf("%.2f%%", Porcentaje)), vjust = -0.4) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+  labs(title = "Distribución por género", x = "Género", y = "Frecuencia")
+
+kable(tabla_gender) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+La distribución por género muestra un ligero predominio de hombres, correspondientes a la categoría `0`, con 398 registros (59,31 %). Por su parte, las mujeres, representadas por la categoría `1`, corresponden a 273 registros (40,69 %).
+
+#### `Race`
+
+```{r race-univ-eda, fig.width=8, fig.height=4, class.source = "fold-hide"}
+# Tabla
+tabla_race <- train_data |>
+  count(Race, name = "Frecuencia") |>
+  arrange(desc(Frecuencia)) |>
+  mutate(
+    Porcentaje = round(Frecuencia / sum(Frecuencia) * 100, 2),
+    `Grupo racial` = dplyr::recode(
+      as.character(Race),
+      "0" = "White",
+      "1" = "Black or African American",
+      "2" = "Asian",
+      "3" = "American Indian or Alaska Native"
+    )
+  ) |>
+  select(`Grupo racial`, Frecuencia, Porcentaje)
+
+# Gráfico
+frecuencias_race <- train_data |>
+  count(Race, name = "Frecuencia") |>
+  mutate(
+    Porcentaje = round(Frecuencia / sum(Frecuencia) * 100, 2),
+    etiqueta = factor(
+      c("White", "Black or African American", "Asian",
+        "American Indian / Alaska Native")[as.integer(as.character(Race)) + 1],
+      levels = c("White", "Black or African American", "Asian",
+                 "American Indian / Alaska Native")
+    )
+  )
+
+ggplot(frecuencias_race, aes(x = etiqueta, y = Frecuencia)) +
+  geom_col(fill = "#1f77b4", width = 0.5) +
+  geom_text(aes(label = sprintf("%.2f%%", Porcentaje)), vjust = -0.4) +
+  scale_x_discrete(labels = label_wrap(18)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+  labs(title = "Distribución por grupo racial", x = "Grupo racial", y = "Frecuencia")
+
+kable(tabla_race) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+En cuanto a la variable `Race`, se observa una marcada concentración de los registros en la categoría White, que representa 611 casos (91,06 %) del conjunto analizado. La categoría Black or African American cuenta con 46 registros (6,86 %), mientras que Asian representa 13 casos (1,94 %). Finalmente, American Indian or Alaska Native presenta únicamente 1 registro (0,15 %).
+
+La distribución evidencia un fuerte desbalance en la variable racial, dado que la categoría de personas de raza blanca concentra más de nueve de cada diez observaciones. Por tanto, las categorías minoritarias tienen una representación considerablemente menor dentro del conjunto de datos.
+
+#### `Variables genéticas`
+
+```{r genes-univ-eda, results='asis', class.source = "fold-hide"}
+variables_categoricas <- train_data |>
+  select(where(is.factor)) |>
+  select(-Grade, -Gender, -Race) |>
+  names()
+
+bloques <- map_chr(variables_categoricas, function(variable) {
+
+  # Tabla de frecuencias
+  tabla <- train_data |>
+    count(.data[[variable]], name = "Frecuencia") |>
+    arrange(desc(Frecuencia)) |>
+    rename(`Categoría` = all_of(variable)) |>
+    mutate(Porcentaje = round(Frecuencia / sum(Frecuencia) * 100, 2))
+
+  html_tabla <- kable(tabla, format = "html") |>
+    kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE) |>
+    as.character()
+
+  # Gráfico de barras
+  p <- ggplot(tabla, aes(x = factor(`Categoría`, levels = `Categoría`), y = Frecuencia)) +
+    geom_col(fill = "#1f77b4", width = 0.5) +
+    labs(title = sprintf("Frecuencia de %s", variable),
+         x = "Categoría", y = "Frecuencia")
+
+  imagen_base64 <- ggplot_a_base64(p, width = 5, height = 3)
+
+  sprintf(
+    '<div style="padding: 15px; border-radius: 8px; margin-bottom: 20px;"><h4 style="margin-bottom: 10px;">%s</h4><div style="margin-bottom: 15px;">%s</div><div style="text-align: center;"><img src="%s" style="max-width: 100%%;"></div></div>',
+    variable, html_tabla, imagen_base64
+  )
+})
+
+html_final <- sprintf(
+  '<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 30px; margin-top: 20px;">%s</div>',
+  paste(bloques, collapse = "")
+)
+
+# Se emite en una sola línea para que pandoc lo trate como HTML crudo.
+cat(gsub("\n\\s*", " ", html_final), "\n")
+```
+
+Las variables genéticas presentan una distribución predominantemente concentrada en la categoría `0`, correspondiente a la ausencia de mutación, mientras que la categoría `1` representa su presencia.
+
+Entre los genes analizados, IDH1 presenta la mayor proporción de casos con mutación, con 322 registros (47,99 %), seguido de TP53, con 270 registros (40,24 %). A continuación se encuentran ATRX con 25,63 %, PTEN con 16,84 %, CIC con 13,71 %, EGFR con 11,62 % y MUC16 con 11,03 %. En un nivel intermedio se encuentran PIK3CA (8,49 %), NF1 (8,35 %) y FUBP1 (6,26 %), mientras que PIK3R1 (5,81 %), RB1 (4,92 %) y NOTCH1 (4,92 %) presentan proporciones inferiores al 6 %. Finalmente, genes como CSMD3 (3,43 %), SMARCA4 (3,43 %), IDH2 (3,13 %), BCOR (3,28 %), GRIN2A (2,83 %), FAT4 (2,68 %) y PDGFRA (2,68 %) muestran una presencia de mutaciones relativamente baja en el conjunto analizado.
+
+En términos generales, se observa una alta variabilidad en la frecuencia de las mutaciones entre los genes, con una mayor concentración en IDH1 y TP53 y una presencia considerablemente menor en los genes restantes. Esto evidencia que las alteraciones genéticas no se distribuyen de manera uniforme en la muestra y que algunos genes presentan una representación mutacional mucho mayor que otros.
+
+## Análisis Bivariado
+
+En esta sección se analiza la relación entre las variables independientes y la variable objetivo `Grade`, considerando tanto variables categóricas como numéricas. Para las variables categóricas se examinan las frecuencias absolutas y relativas de sus categorías según cada nivel de `Grade`, complementando las comparaciones mediante gráficos de barras agrupadas. Para la variable numérica `Age_at_diagnosis`, se analiza y compara su distribución entre los grupos de `Grade` mediante estadísticos descriptivos y gráficos de caja. Finalmente, se realiza un análisis de correlación entre las variables numéricas para evaluar la intensidad y dirección de las relaciones entre ellas.
+
+### `Grade` - `Age_at_diagnosis`
+
+```{r grade-age-box-eda, fig.width=8, fig.height=6}
+medias <- train_data |>
+  group_by(Grade) |>
+  summarise(media = mean(Age_at_diagnosis))
+
+ggplot(train_data, aes(x = Grade, y = Age_at_diagnosis)) +
+  geom_boxplot(fill = "#1E90FF", alpha = 0.6, color = "black") +
+  geom_point(data = medias, aes(x = Grade, y = media), color = "red", size = 3) +
+  labs(title = "Distribución de la edad según el grado del tumor",
+       x = "Grado del tumor (Grade)", y = "Edad al diagnóstico")
+```
+
+```{r grade-age-tabla-eda}
+age_grade <- train_data |>
+  group_by(Grade) |>
+  summarise(
+    n       = n(),
+    media   = mean(Age_at_diagnosis),
+    ds      = sd(Age_at_diagnosis),
+    mediana = median(Age_at_diagnosis),
+    minimo  = min(Age_at_diagnosis),
+    maximo  = max(Age_at_diagnosis),
+    Q1      = quantile(Age_at_diagnosis, 0.25),
+    Q3      = quantile(Age_at_diagnosis, 0.75),
+    IQR     = Q3 - Q1
+  ) |>
+  mutate(variable = "Age_at_diagnosis", niveles = as.character(Grade)) |>
+  select(variable, niveles, Grade, n, media, ds, mediana, minimo, maximo, Q1, Q3, IQR)
+
+kable(age_grade, digits = 6) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = TRUE) |>
+  scroll_box(width = "100%")
+```
+
+El análisis bivariado de la edad al diagnóstico (`Age_at_diagnosis`) según el grado del tumor (`Grade`) muestra una clara separación clínico-demográfica entre los Gliomas de Bajo Grado (LGG / Grado 0) y el Glioblastoma Multiforme (GBM / Grado 1).
+
+**Distribución Estadística**
+
+* *Glioma de Bajo Grado (LGG / Grado 0):* En la muestra de 389 pacientes, la edad promedio al diagnóstico es de 44,10 ± 13,20 años y la mediana alcanza los 41,89 años. El 50% central de los pacientes se concentra entre los 33,91 ($Q_1$) y 54,27 años ($Q_3$), registrando un rango intercuartílico (IQR) de 20,36 años.
+
+* *Glioblastoma Multiforme (GBM / Grado 1):* En el grupo de 282 pacientes, la media asciende a 60,75 ± 13,45 años, con una mediana de 61,49 años. Su intervalo intercuartílico se ubica entre los 52,75 ($Q_1$) y 69,88 años ($Q_3$), representando un IQR de 17,13 años.
+
+**Separación de Poblaciones y Análisis de Outliers**
+
+Existe una baja superposición en el núcleo de ambas distribuciones. El 75% de los pacientes diagnosticados con LGG tiene 54,27 años o menos, mientras que el 75% de los casos de GBM presenta una edad de diagnóstico igual o superior a 52,75 años. Esto evidencia una diferencia importante en la edad de diagnóstico entre ambos niveles de `Grade`, con una mayor concentración de edades en los pacientes con GBM.
+
+En el análisis univariado de `Age_at_diagnosis`, considerando la distribución global de todos los pacientes, no se identificaron valores atípicos mediante el criterio del rango intercuartílico (IQR). Sin embargo, al analizar la edad de manera bivariada según `Grade`, sí aparecen observaciones que pueden clasificarse como outliers dentro de los grupos individuales. Esto ocurre porque cada nivel de `Grade` presenta su propia distribución, con diferentes valores de $Q_1$, $Q_3$ e IQR; por lo tanto, una edad que se encuentra dentro del rango esperado de la población total puede resultar extrema cuando se compara únicamente con la distribución de su grupo.
+
+* *Valores Atípicos en Grado 0:* Se identifica un valor atípico superior de 87 años, que resulta inusual dentro de la distribución de edades de los pacientes con LGG.
+
+* *Valores Atípicos en Grado 1:* El grupo GBM presenta valores atípicos inferiores entre 21,73 y 25,20 años, correspondientes a edades considerablemente menores que las habituales dentro de este grupo y que representan casos poco frecuentes de glioblastoma en adultos jóvenes.
+
+#### Prueba U de Mann–Whitney
+
+Para evaluar si existen diferencias estadísticamente significativas en la edad al diagnóstico entre los grupos de `Grade`, se utiliza la prueba U de Mann–Whitney, debido a que la variable `Age_at_diagnosis` no presenta una distribución normal según la prueba de Shapiro-Wilk.
+
+- **Hipótesis nula ($H_0$):** no existen diferencias estadísticamente significativas en la distribución de `Age_at_diagnosis` entre los grupos `Grade = 0` y `Grade = 1`.
+
+- **Hipótesis alternativa ($H_1$):** existen diferencias estadísticamente significativas en la distribución de `Age_at_diagnosis` entre los grupos `Grade = 0` y `Grade = 1`.
+
+Se utiliza un nivel de significancia de $\alpha = 0,05$.
+
+```{r mannwhitney-eda}
+grupo_0 <- train_data |> filter(Grade == 0) |> pull(Age_at_diagnosis)
+grupo_1 <- train_data |> filter(Grade == 1) |> pull(Age_at_diagnosis)
+
+# wilcox.test reporta como estadístico W el U de Mann-Whitney del primer grupo
+mw_test <- wilcox.test(grupo_0, grupo_1, alternative = "two.sided", exact = FALSE)
+
+n0 <- length(grupo_0); n1 <- length(grupo_1)
+u_mw <- unname(mw_test$statistic)
+
+# Tamaño del efecto: correlación biserial por rangos, r = 1 - 2U / (n0 · n1).
+# 1 - U / (n0 · n1) es la probabilidad de que un paciente con GBM tomado al azar
+# sea mayor que uno con LGG tomado al azar.
+r_biserial <- 1 - 2 * u_mw / (n0 * n1)
+p_superior <- 1 - u_mw / (n0 * n1)
+
+tibble(
+  Medida = c("Pacientes LGG / GBM", "Mediana de edad en LGG", "Mediana de edad en GBM",
+             "Estadístico U", "p-valor", "Correlación biserial por rangos",
+             "P(edad GBM > edad LGG)"),
+  Valor  = c(sprintf("%d / %d", n0, n1),
+             paste(num(median(grupo_0)), "años"), paste(num(median(grupo_1)), "años"),
+             num(u_mw, 1), num_p(mw_test$p.value), num(r_biserial, 3),
+             paste0(num(100 * p_superior, 1), " %"))
+) |>
+  tabla_resultado("Prueba U de Mann–Whitney: edad al diagnóstico según Grade",
+                  align = c("l", "r")) |>
+  column_spec(2, bold = TRUE)
+```
+
+La mediana de edad es de `r num(median(grupo_0), 1)` años en los LGG y de `r num(median(grupo_1), 1)` años en los GBM, casi `r round(median(grupo_1) - median(grupo_0))` años más. La prueba confirma que la diferencia no se debe al azar (U = `r num(u_mw, 1)`; p = `r num_p(mw_test$p.value)`), así que se rechaza la hipótesis nula.
+
+El tamaño del efecto muestra que la diferencia, además de significativa, es grande: la correlación biserial por rangos es de `r num(r_biserial, 2)`, por encima de 0,5, el umbral habitual de un efecto grande. Dicho de forma más intuitiva, si se toma al azar un paciente con GBM y uno con LGG, el de GBM es mayor en el `r num(100 * p_superior, 0)` % de los casos. Aun así, ambas distribuciones se solapan, y la prueba por sí sola no permite establecer una relación causal entre la edad y el grado del glioma.
+
+```{r funcion-bivariado-eda, class.source = "fold-hide"}
+analisis_bivariado <- function(df, target, variable, etiquetas = NULL,
+                               titulo = NULL, xlabel = NULL) {
+
+  df_plot <- df |>
+    count(.data[[target]], .data[[variable]], name = "n", .drop = FALSE) |>
+    group_by(.data[[target]]) |>
+    mutate(porcentaje = round(n / sum(n) * 100, 1)) |>
+    ungroup() |>
+    rename(categoria = all_of(variable))
+
+  df_plot$categoria <- as.character(df_plot$categoria)
+
+  if (!is.null(etiquetas)) {
+    df_plot$categoria <- dplyr::recode(df_plot$categoria, !!!etiquetas)
+  }
+
+  df_plot <- df_plot |>
+    mutate(grupo = factor(sprintf("%s %s", target, .data[[target]]))) |>
+    select(all_of(target), grupo, categoria, n, porcentaje)
+
+  if (is.null(titulo)) titulo <- sprintf("Distribución de %s según %s", variable, target)
+  if (is.null(xlabel)) xlabel <- variable
+
+  fig <- ggplot(df_plot, aes(x = factor(categoria, levels = sort(unique(categoria))),
+                             y = n, fill = grupo)) +
+    geom_col(position = position_dodge(width = 0.8), width = 0.8) +
+    geom_text(aes(label = sprintf("%d (%.1f%%)", n, porcentaje)),
+              position = position_dodge(width = 0.8), vjust = -0.4, size = 3) +
+    scale_fill_manual(values = c("#1f77b4", "#ff7f0e"), name = target) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+    labs(title = titulo, x = xlabel, y = "Cantidad de pacientes") +
+    theme(legend.position = "right")
+
+  list(tabla = df_plot, grafico = fig)
+}
+```
+
+### `Grade` - `Gender`
+
+```{r grade-gender-eda, fig.width=8, fig.height=5}
+tabla_gender_bivariada <- analisis_bivariado(
+  train_data,
+  target    = "Grade",
+  variable  = "Gender",
+  etiquetas = c("0" = "Hombre", "1" = "Mujer"),
+  titulo    = "Distribución del género según Grade",
+  xlabel    = "Género"
+)
+tabla_gender_bivariada$grafico
+```
+
+La distribución del género presenta diferencias entre los dos niveles de Grade. En Grade 0, se registran 220 hombres (56,6%) y 169 mujeres (43,4%), mientras que en Grade 1 se observan 178 hombres (63,1%) y 104 mujeres (36,9%). En ambos niveles predomina el género masculino; sin embargo, esta predominancia es mayor en Grade 1, donde los hombres representan el 63,1% frente al 56,6% en Grade 0. Por otro lado, la proporción de mujeres disminuye de 43,4% en Grade 0 a 36,9% en Grade 1. En términos descriptivos, estos resultados sugieren una mayor representación masculina en Grade 1, aunque las diferencias observadas no permiten establecer por sí solas una asociación estadísticamente significativa entre el género y Grade.
+
+#### Prueba de independencia: $\chi^2$
+
+En este caso, se analiza la relación entre `Gender` y `Grade` mediante una prueba de independencia de Chi-cuadrado ($\chi^2$).
+
+Se utiliza un nivel de significancia de $\alpha = 0,05$:
+
+- **Hipótesis nula ($H_0$):** `Gender` y `Grade` son independientes; no existe una asociación estadísticamente significativa entre ambas variables.
+
+- **Hipótesis alternativa ($H_1$):** `Gender` y `Grade` no son independientes; existe una asociación estadísticamente significativa entre ambas variables.
+
+```{r chi2-gender-eda}
+tabla_gender_grade <- table(train_data$Gender, train_data$Grade)
+
+chi2_gender     <- chisq.test(tabla_gender_grade)                  # con corrección de Yates
+chi2_gender_sin <- chisq.test(tabla_gender_grade, correct = FALSE)  # para la V de Cramér
+v_cramer_gender <- sqrt(unname(chi2_gender_sin$statistic) / sum(tabla_gender_grade))
+
+tibble(
+  Medida = c("χ² de Pearson (con corrección de Yates)", "Grados de libertad", "p-valor",
+             "Frecuencia esperada mínima", "V de Cramér (sin corrección de sesgo)"),
+  Valor  = c(num(chi2_gender$statistic, 4), as.character(chi2_gender$parameter),
+             num(chi2_gender$p.value, 4), num(min(chi2_gender$expected), 1),
+             num(v_cramer_gender, 3))
+) |>
+  tabla_resultado("Prueba de independencia: Grade – Gender", align = c("l", "r")) |>
+  column_spec(2, bold = TRUE)
+```
+
+El estadístico obtenido es $\chi^2(1) =$ `r num(chi2_gender$statistic, 4)`, con un p-valor de `r num(chi2_gender$p.value, 4)`. Como p > 0,05, no se rechaza la hipótesis nula: no hay evidencia de asociación entre `Gender` y `Grade` en el conjunto de entrenamiento. La V de Cramér (`r num(v_cramer_gender, 2)`) apunta en la misma dirección, porque incluso la diferencia observada entre grupos sería despreciable. El supuesto de la prueba se cumple holgadamente: la frecuencia esperada más baja es `r num(min(chi2_gender$expected), 1)`.
+
+### `Grade` - `Race`
+
+```{r grade-race-eda, fig.width=8, fig.height=5}
+tabla_race_bivariada <- analisis_bivariado(
+  train_data,
+  target    = "Grade",
+  variable  = "Race",
+  etiquetas = c("0" = "White", "1" = "Black or African American",
+                "2" = "Asian", "3" = "American Indian"),
+  titulo    = "Distribución del grupo racial según Grade",
+  xlabel    = "Grupo racial"
+)
+tabla_race_bivariada$grafico + scale_x_discrete(labels = label_wrap(14))
+```
+
+La distribución por grupo racial muestra un predominio marcado de la población blanca en ambos niveles de Grade. En Grade 0, el grupo White concentra 365 pacientes (93,8%), mientras que en Grade 1 representa 246 pacientes (87,2%). El grupo Black or African American constituye el segundo grupo con mayor representación, con 16 pacientes (4,1%) en Grade 0 y 30 pacientes (10,6%) en Grade 1. Por su parte, la población asiática presenta una participación reducida, con 7 casos (1,8%) en Grade 0 y 6 casos (2,1%) en Grade 1, mientras que American Indian or Alaska Native presenta una ocurrencia prácticamente nula, con 1 caso (0,3%) en Grade 0 y ningún caso en Grade 1.
+
+En términos comparativos, se observa que la proporción del grupo White disminuye en Grade 1, pasando de 93,8% a 87,2%, mientras que el grupo Black or African American aumenta de 4,1% a 10,6%.
+
+Además, si bien existen diferencias en la distribución de los grupos raciales entre los niveles de Grade, estos resultados deben analizarse con precaución, ya que la muestra está fuertemente concentrada en el grupo White y algunas de las demás categorías presentan muy pocas observaciones.
+
+#### Prueba de independencia: $\chi^2$
+
+Para realizar la prueba de independencia entre `Grade` y `Race`, se decidió reagrupar las categorías de la variable racial debido a las bajas frecuencias observadas en algunos grupos. En particular, las categorías Asian y American Indian or Alaska Native presentan un número reducido de observaciones, lo que puede generar frecuencias esperadas demasiado bajas y afectar la validez de la prueba estadística.
+
+Por esta razón, se mantuvo la categoría White, que representa la mayoría de los registros, y se agruparon Black or African American, Asian y American Indian or Alaska Native en una nueva categoría denominada Other racial groups.
+
+De esta manera, la variable `Race` queda conformada por dos categorías: White y Other racial groups, permitiendo realizar la prueba de independencia con una distribución de frecuencias más adecuada.
+
+```{r race-agrupada-eda}
+race_agrupada <- dplyr::recode(
+  as.character(train_data$Race),
+  "0" = "White",
+  "1" = "Other racial groups",
+  "2" = "Other racial groups",
+  "3" = "Other racial groups"
+)
+
+tabla_race <- table(Grade = train_data$Grade, Race = race_agrupada)
+
+kable(as.data.frame.matrix(tabla_race)) |>
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE)
+```
+
+Se utiliza un nivel de significancia de $\alpha = 0,05$:
+
+- **Hipótesis nula ($H_0$):** `Race` y `Grade` son independientes; la proporción de LGG y GBM es la misma en ambos grupos raciales.
+
+- **Hipótesis alternativa ($H_1$):** `Race` y `Grade` no son independientes; la proporción de LGG y GBM difiere entre grupos raciales.
+
+```{r chi2-race-eda, class.source = "fold-hide"}
+chi2_race     <- chisq.test(tabla_race)                    # con corrección de Yates
+chi2_race_sin <- chisq.test(tabla_race, correct = FALSE)   # sin corrección, para la V de Cramér
+fisher_race   <- fisher.test(tabla_race)
+v_cramer_race <- sqrt(unname(chi2_race_sin$statistic) / sum(tabla_race))
+
+# Odds ratio de GBM en Other racial groups frente a White, con IC 95 % de Wald.
+# La tabla debe tener las filas (Other, White) y las columnas (GBM, LGG).
+odds_ratio_wald <- function(t) {
+  or <- (t[1, 1] * t[2, 2]) / (t[1, 2] * t[2, 1])
+  ee <- sqrt(sum(1 / t))
+  c(or = or, inf = exp(log(or) - 1.96 * ee), sup = exp(log(or) + 1.96 * ee))
+}
+
+race_factor  <- factor(race_agrupada, levels = c("Other racial groups", "White"))
+grade_factor <- factor(train_data$Grade, levels = c("1", "0"))
+or_race      <- odds_ratio_wald(table(race_factor, grade_factor))
+
+pct_gbm_other <- 100 * mean(train_data$Grade[race_agrupada != "White"] == "1")
+pct_gbm_white <- 100 * mean(train_data$Grade[race_agrupada == "White"] == "1")
+pct_white     <- 100 * mean(race_agrupada == "White")
+
+resultados_race <- tibble(
+  Medida = c("χ² de Pearson (con corrección de Yates)", "Grados de libertad",
+             "p-valor (χ²)", "p-valor (prueba exacta de Fisher)",
+             "Frecuencia esperada mínima",
+             "V de Cramér (sin corrección de sesgo)",
+             "OR de GBM: Other racial groups vs. White (IC 95 %)"),
+  Valor  = c(num(chi2_race$statistic, 4),
+             as.character(chi2_race$parameter),
+             num(chi2_race$p.value, 4),
+             num(fisher_race$p.value, 4),
+             num(min(chi2_race$expected), 1),
+             num(v_cramer_race, 3),
+             sprintf("%s (%s – %s)", num(or_race["or"]), num(or_race["inf"]),
+                     num(or_race["sup"])))
+)
+
+kable(resultados_race, align = c("l", "r"),
+      caption = "<b>Prueba de independencia: Grade – Race (agrupada)</b>") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
+  row_spec(0, background = "#1f77b4", color = "white", bold = TRUE) |>
+  column_spec(2, bold = TRUE)
+```
+
+Con p = `r num(chi2_race$p.value, 4)` (< 0,05) se rechaza la hipótesis de independencia, y la prueba exacta de Fisher, que no depende de la aproximación asintótica, llega a la misma conclusión (p = `r num(fisher_race$p.value, 4)`). El supuesto de la prueba se cumple tras agrupar las categorías: la frecuencia esperada más baja es `r num(min(chi2_race$expected), 1)`, muy por encima de 5. En la muestra, el `r num(pct_gbm_other, 1)` % de los pacientes de Other racial groups tiene GBM, frente al `r num(pct_gbm_white, 1)` % de los pacientes White; la odds de GBM es `r num(or_race["or"])` veces mayor en el primer grupo (IC 95 %: `r num(or_race["inf"])`–`r num(or_race["sup"])`).
+
+Que la asociación sea significativa no la hace fuerte. La V de Cramér (`r num(v_cramer_race, 2)`) indica una asociación débil: el `r num(pct_white, 1)` % de los pacientes son White, así que la variable apenas cambia de un paciente a otro y, por sí sola, separa poco a los LGG de los GBM.
+
+Los registros poblacionales tampoco respaldan una relación directa entre grupo racial y grado tumoral. En Estados Unidos, la incidencia de los principales subtipos de glioma, incluido el glioblastoma, es más alta en personas blancas no hispanas, y en la población negra es en conjunto alrededor de un 52 % menor ([Ostrom et al., 2018](https://pmc.ncbi.nlm.nih.gov/articles/PMC6143018/)). Esos mismos autores advierten que no contaban con datos moleculares. Trabajos más recientes que sí los incluyen encuentran que lo que varía entre grupos raciales y étnicos es la proporción de tumores con mutación en IDH, y que al estratificar por estado de IDH desaparecen las diferencias de supervivencia por raza ([Kinslow et al., 2025](https://academic.oup.com/neuro-oncology/article/27/Supplement_5/v191/8318789)). Por eso conviene comprobar si en este dataset la asociación entre `Race` y `Grade` se mantiene una vez se tiene en cuenta IDH1, la variable más asociada con el grado.
+
+#### Análisis estratificado por IDH1
+
+```{r race-idh1-eda, class.source = "fold-hide"}
+idh1_factor <- factor(train_data$IDH1, levels = c("0", "1"),
+                      labels = c("Sin mutación (IDH1 = 0)", "Con mutación (IDH1 = 1)"))
+tabla_estratos <- table(Race = race_factor, Grade = grade_factor, IDH1 = idh1_factor)
+
+pct_gbm <- function(t, grupo) {
+  sprintf("%s %% (%d/%d)", num(100 * t[grupo, "1"] / sum(t[grupo, ]), 1),
+          t[grupo, "1"], sum(t[grupo, ]))
+}
+
+resumen_estratos <- map_dfr(dimnames(tabla_estratos)$IDH1, function(estrato) {
+  t  <- tabla_estratos[, , estrato]
+  or <- odds_ratio_wald(t)
+  tibble(
+    `Estrato` = estrato,
+    Pacientes = sum(t),
+    `GBM en White` = pct_gbm(t, "White"),
+    `GBM en Other racial groups` = pct_gbm(t, "Other racial groups"),
+    `OR (IC 95 %)` = sprintf("%s (%s – %s)", num(or["or"]), num(or["inf"]), num(or["sup"])),
+    `p (Fisher)` = num(fisher.test(t)$p.value, 4)
+  )
+})
+
+mh_race <- mantelhaen.test(tabla_estratos)
+
+pct_wt_other <- 100 * mean(train_data$IDH1[race_agrupada != "White"] == "0")
+pct_wt_white <- 100 * mean(train_data$IDH1[race_agrupada == "White"] == "0")
+
+kable(resumen_estratos, align = c("l", "r", "r", "r", "r", "r"),
+      caption = "<b>Proporción de GBM por grupo racial dentro de cada estrato de IDH1</b>") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
+  row_spec(0, background = "#1f77b4", color = "white", bold = TRUE) |>
+  footnote(general = sprintf(
+    "Mantel–Haenszel (asociación ajustada por IDH1): OR común = %s; χ²(1) = %s; p = %s.",
+    num(mh_race$estimate), num(mh_race$statistic, 4), num(mh_race$p.value, 4)),
+    general_title = "")
+```
+
+Al separar por estado de IDH1, la asociación casi desaparece. Entre los tumores sin mutación, la proporción de GBM es prácticamente la misma en los dos grupos y el OR queda muy cerca de 1. Entre los tumores con mutación sí aparece una diferencia, pero se apoya en solo `r sum(tabla_estratos["Other racial groups", , 2])` pacientes de Other racial groups, `r tabla_estratos["Other racial groups", "1", 2]` de ellos con GBM, y por eso su intervalo de confianza es tan amplio. Combinando ambos estratos, la prueba de Mantel–Haenszel deja de ser significativa (OR común = `r num(mh_race$estimate)`; p = `r num(mh_race$p.value, 4)`).
+
+La explicación está en que los dos grupos tienen perfiles moleculares distintos: el `r num(pct_wt_other, 1)` % de los pacientes de Other racial groups no tiene la mutación en IDH1, frente al `r num(pct_wt_white, 1)` % de los White, y la ausencia de esa mutación es justamente lo que más se asocia con GBM en este dataset. Buena parte de la asociación cruda entre `Race` y `Grade` es, por tanto, un reflejo de la asociación con IDH1.
+
+Hay además dos razones para leer este resultado con cautela. La primera es la composición de la muestra: la mayoría de las muestras de TCGA provienen de pacientes blancos ([Spratt et al., 2016](https://doi.org/10.1001/jamaoncol.2016.1854)), y en los estudios ómicos de glioma la raza casi nunca se reporta y los pacientes negros están muy subrepresentados ([Dada et al., 2025](https://doi.org/10.1093/nop/npaf016)). Aquí solo `r sum(race_agrupada != "White")` pacientes quedan fuera del grupo White, de modo que unos pocos casos más o menos en cada celda moverían bastante las proporciones. La segunda es la propia variable: las categorías raciales son autodeclaradas, agrupan poblaciones muy diversas y, en este análisis, cuatro de ellas se fusionaron en una sola para cumplir el supuesto de frecuencias esperadas. En conjunto, la asociación entre `Race` y `Grade` es estadísticamente significativa pero débil, se explica en gran parte por IDH1 y no permite atribuirle al grupo racial un efecto propio ni causal sobre el grado tumoral.
+
+**Referencias de esta sección**
+
+- Dada, O. E., Chisango, Z., Nkansah-Poku, K. A. B., et al. (2025). Race and "omic" data in glioma: a systematic review of contemporary research to explore the digital divide. *Neuro-Oncology Practice*, 12(4), 585–599. <https://doi.org/10.1093/nop/npaf016>
+- Kinslow, C. J., DeStephano, D., Ostrom, Q., et al. (2025). EPID-25. Molecular epidemiology of adult diffuse gliomas in the United States. *Neuro-Oncology*, 27(Suppl. 5), v191 (resumen de congreso). <https://academic.oup.com/neuro-oncology/article/27/Supplement_5/v191/8318789>
+- Ostrom, Q. T., Cote, D. J., Ascha, M., Kruchko, C. y Barnholtz-Sloan, J. S. (2018). Adult glioma incidence and survival by race or ethnicity in the United States from 2000 to 2014. *JAMA Oncology*, 4(9), 1254–1262. <https://pmc.ncbi.nlm.nih.gov/articles/PMC6143018/>
+- Spratt, D. E., Chan, T., Waldron, L., et al. (2016). Racial/ethnic disparities in genomic sequencing. *JAMA Oncology*, 2(8), 1070–1074. <https://doi.org/10.1001/jamaoncol.2016.1854>
+
+### `Grade` - `variables genéticas`
+
+Se analiza la distribución de las variables genéticas según los niveles de Grade, diferenciando entre pacientes con glioma de bajo grado (LGG, Grade 0) y glioblastoma (GBM, Grade 1). Esta comparación permite identificar diferencias descriptivas en la presencia o ausencia de mutaciones entre ambos grupos.
+
+```{r funcion-prueba-independencia-eda, class.source = "fold-hide"}
+prueba_independencia <- function(df, target, variable, alpha = 0.05) {
+
+  tabla <- table(df[[variable]], df[[target]])
+
+  # chi2 con y sin corrección de Yates
+  chi2_c <- suppressWarnings(chisq.test(tabla, correct = TRUE))
+  chi2_s <- suppressWarnings(chisq.test(tabla, correct = FALSE))
+  esperadas <- chi2_c$expected
+
+  supuesto_valido <- all(esperadas >= 5)
+  usar_fisher <- all(dim(tabla) == c(2, 2)) && !supuesto_valido
+
+  if (usar_fisher) {
+    p_valor    <- fisher.test(tabla)$p.value
+    test_usado <- "Fisher exacto"
+  } else {
+    p_valor    <- chi2_c$p.value
+    test_usado <- "Chi-cuadrado"
+  }
+
+  list(
+    variable        = variable,
+    test            = test_usado,
+    chi2            = unname(chi2_s$statistic),
+    chi2_yates      = unname(chi2_c$statistic),
+    dof             = unname(chi2_c$parameter),
+    p_value         = p_valor,
+    expected_min    = min(esperadas),
+    supuesto_valido = supuesto_valido,
+    significativo   = p_valor < alpha
+  )
+}
+```
+
+```{r funcion-menu-gen-eda, class.source = "fold-hide"}
+crear_menu_gen <- function(df, target, variable, interpretacion,
+                           etiquetas = NULL, width = 7, height = 4) {
+
+  res <- analisis_bivariado(
+    df        = df,
+    target    = target,
+    variable  = variable,
+    etiquetas = etiquetas
+  )
+
+  imagen_base64 <- ggplot_a_base64(res$grafico, width = width, height = height)
+
+  resultado_test <- prueba_independencia(df, target, variable)
+
+  color_resultado <- if (resultado_test$significativo) "#1a7f37" else "#6e7781"
+  conclusion <- if (resultado_test$significativo) {
+    "se rechaza H₀: existe asociación estadísticamente significativa"
+  } else {
+    "no se rechaza H₀: no hay evidencia de asociación significativa"
+  }
+
+  estadistico_str <- if (resultado_test$test == "Chi-cuadrado") {
+    sprintf("χ²(%d) = %.4f", resultado_test$dof, resultado_test$chi2)
+  } else {
+    "Fisher exacto (frecuencia esperada < 5)"
+  }
+
+  html_test <- sprintf(
+    '<div style="margin-top: 16px; padding: 10px 14px; border-left: 4px solid %s; background-color: rgba(110, 119, 129, 0.08); border-radius: 4px; font-size: 14px;"><b>Prueba de independencia (%s):</b> %s, p-value = %.4f → <span style="color:%s; font-weight:600;">%s</span> (α = 0.05)</div>',
+    color_resultado, resultado_test$test, estadistico_str,
+    resultado_test$p_value, color_resultado, conclusion
+  )
+
+  # El texto se muestra como un solo párrafo, igual que en el notebook
+  texto <- str_squish(interpretacion)
+
+  sprintf(
+    '<details class="gen-details"><summary>%s</summary><div style="padding: 20px;"><p style="line-height: 1.7; text-align: justify; margin-top: 0;">%s</p>%s<div style="text-align: center; margin-top: 20px;"><img src="%s" style="max-width: 100%%; height: auto; border-radius: 4px;"></div></div></details>',
+    variable, texto, html_test, imagen_base64
+  )
+}
+```
+
+```{r interpretaciones-genes-eda, class.source = "fold-hide"}
+# El texto de cada gen está en textos/interpretaciones_genes.md, en una sección
+# "## GEN" por variable, para no mezclar redacción larga con el código.
+lineas  <- read_lines("textos/interpretaciones_genes.md")
+es_gen  <- str_detect(lineas, "^## ")
+seccion <- cumsum(es_gen)
+cuerpo  <- !es_gen & seccion > 0
+
+interpretaciones_genes <- split(lineas[cuerpo], seccion[cuerpo]) |>
+  map_chr(~ str_squish(paste(.x, collapse = " "))) |>
+  set_names(str_remove(lineas[es_gen], "^## "))
+```
+
+```{r genes-bivariado-eda, results='asis'}
+estilo_menus <- '<style>.gen-details { margin: 10px 0; border: 1px solid #d0d7de; border-radius: 8px; overflow: hidden; color: #1f2328; background-color: #ffffff; } .gen-details summary { padding: 14px 18px; cursor: pointer; font-size: 17px; font-weight: 500; background-color: #f6f8fa; } @media (prefers-color-scheme: dark) { .gen-details { color: #e6edf3; background-color: #0d1117; } .gen-details summary { background-color: #161b22; } }</style>'
+
+html_genes <- map_chr(names(interpretaciones_genes), function(gen) {
+  crear_menu_gen(
+    train_data,
+    target         = "Grade",
+    variable       = gen,
+    etiquetas      = c("0" = "Ausencia", "1" = "Presencia"),
+    interpretacion = interpretaciones_genes[[gen]]
+  )
+})
+
+cat(estilo_menus, "\n\n")
+cat(sprintf('<div style="margin-top: 20px;">%s</div>', paste(html_genes, collapse = "")), "\n")
+```
+
+Las variables genéticas presentan, en conjunto, comportamientos muy heterogéneos frente a Grade: mientras genes como IDH1, CIC, ATRX y FUBP1 muestran diferencias marcadas y estadísticamente significativas entre LGG y GBM, otros como BCOR, CSMD3, FAT4 y PIK3CA presentan distribuciones prácticamente equivalentes entre ambos grupos, sugiriendo un poder discriminativo individual bajo.
+
+### Multicolinealidad y correlación
+
+```{r spearman-eda, fig.width=14, fig.height=10}
+train_data <- train_data |>
+  mutate(Race_binary = factor(if_else(as.character(Race) == "0", 0, 1)))
+
+cols_spearman <- setdiff(names(train_data), "Race")
+spearman_corr <- train_data |>
+  select(all_of(cols_spearman)) |>
+  mutate(across(everything(), ~ as.numeric(as.character(.x)))) |>
+  cor(method = "spearman")
+
+# Solo el triángulo inferior (sin la diagonal), como la máscara del notebook
+spearman_long <- as.data.frame(spearman_corr) |>
+  rownames_to_column("var1") |>
+  pivot_longer(-var1, names_to = "var2", values_to = "r") |>
+  mutate(var1 = factor(var1, levels = rev(colnames(spearman_corr))),
+         var2 = factor(var2, levels = colnames(spearman_corr))) |>
+  filter(as.integer(var2) < match(var1, colnames(spearman_corr)))
+
+ggplot(spearman_long, aes(x = var2, y = var1, fill = r)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  scale_fill_gradient2(low = "#2369BD", mid = "white", high = "#A9373B",
+                       midpoint = 0, limits = c(-1, 1),
+                       name = "Coeficiente de Correlación\nde Spearman (r)") +
+  labs(title = sprintf("Matriz de Correlación de Spearman (Train Set - %d Variables)",
+                       ncol(spearman_corr)),
+       x = NULL, y = NULL) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        panel.grid = element_blank())
+```
+
+```{r spearman-target-eda, fig.width=9, fig.height=7}
+target_corr <- spearman_corr[, "Grade"]
+target_corr <- sort(target_corr[names(target_corr) != "Grade"])
+
+df_target_corr <- tibble(variable = names(target_corr), r = target_corr) |>
+  mutate(variable = factor(variable, levels = variable),
+         signo    = if_else(r < 0, "0", "1"))
+
+ggplot(df_target_corr, aes(x = r, y = variable, fill = signo)) +
+  geom_col(color = "black", linewidth = 0.3) +
+  geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.4) +
+  geom_text(aes(label = sprintf("%.2f", r), hjust = if_else(r >= 0, -0.15, 1.15)),
+            size = 3, fontface = "bold") +
+  scale_fill_manual(values = PALETTE_GRADE, guide = "none") +
+  coord_cartesian(xlim = c(-0.85, 0.65)) +
+  labs(title = "Correlación de Spearman de cada Atributo con la Severidad (Grade)",
+       x = "Coeficiente de Correlación (r)", y = NULL) +
+  theme(panel.grid.major.y = element_blank())
+```
+
+```{r calcular-asociacion-eda, class.source = "fold-hide"}
+phi_maximo <- function(tabla) {
+  # Máximo |phi| alcanzable dadas las prevalencias marginales (solo 2x2).
+  if (!all(dim(tabla) == c(2, 2))) return(NA_real_)
+  n  <- sum(tabla)
+  p1 <- sum(tabla[2, ]) / n
+  p2 <- sum(tabla[, 2]) / n
+  a  <- min(p1, p2); b <- max(p1, p2)
+  if (a %in% c(0, 1) || b %in% c(0, 1)) return(NA_real_)
+  sqrt((a * (1 - b)) / (b * (1 - a)))
+}
+
+phi_signado <- function(tabla) {
+  # Coeficiente phi con signo (solo 2x2).
+  if (!all(dim(tabla) == c(2, 2))) return(NA_real_)
+  a <- tabla[1, 1]; b <- tabla[1, 2]; cc <- tabla[2, 1]; d <- tabla[2, 2]
+  den <- sqrt(as.numeric(a + b) * (cc + d) * (a + cc) * (b + d))
+  if (den > 0) (a * d - b * cc) / den else 0
+}
+
+calcular_asociacion <- function(x, y) {
+  tabla <- table(x, y)
+
+  chi2_c    <- suppressWarnings(chisq.test(tabla, correct = TRUE))
+  chi2_s    <- suppressWarnings(chisq.test(tabla, correct = FALSE))
+  esperadas <- chi2_c$expected
+
+  supuesto_valido <- all(esperadas >= 5)
+  freq_esp_min    <- min(esperadas)
+
+  if (all(dim(tabla) == c(2, 2)) && !supuesto_valido) {
+    p_val <- fisher.test(tabla)$p.value
+    test  <- "Fisher exacto"
+  } else {
+    p_val <- chi2_c$p.value
+    test  <- "Chi-cuadrado"
+  }
+
+  n    <- sum(tabla)
+  phi2 <- unname(chi2_s$statistic) / n
+  r <- nrow(tabla); k <- ncol(tabla)
+  phi2corr <- max(0, phi2 - ((k - 1) * (r - 1)) / (n - 1))
+  rcorr    <- r - ((r - 1)^2) / (n - 1)
+  kcorr    <- k - ((k - 1)^2) / (n - 1)
+  den      <- min(kcorr - 1, rcorr - 1)
+  v_cramer <- if (den > 0) sqrt(phi2corr / den) else 0
+
+  phi      <- phi_signado(tabla)
+  pmax     <- phi_maximo(tabla)
+  phi_norm <- if (!is.na(pmax) && pmax > 0) phi / pmax else NA_real_
+
+  list(
+    chi2 = unname(chi2_s$statistic), p_value = p_val, test = test,
+    v_cramer = v_cramer, phi = phi, phi_max = pmax, phi_norm = phi_norm,
+    supuesto_valido = supuesto_valido, freq_esp_min = freq_esp_min
+  )
+}
+
+
+cat_cols <- setdiff(names(train_data), c("Age_at_diagnosis", "Race"))
+n_cols   <- length(cat_cols)
+
+cramer_matrix    <- matrix(1, nrow = n_cols, ncol = n_cols,
+                           dimnames = list(cat_cols, cat_cols))
+resultados_grade <- list()
+resultados_pares <- list()
+
+for (i in seq_len(n_cols)) {
+  var1 <- cat_cols[i]
+  for (j in seq_len(i - 1)) {
+    var2 <- cat_cols[j]
+    r <- calcular_asociacion(train_data[[var1]], train_data[[var2]])
+
+    cramer_matrix[i, j] <- r$v_cramer
+    cramer_matrix[j, i] <- r$v_cramer
+
+    if ("Grade" %in% c(var1, var2)) {
+      otra <- if (var1 == "Grade") var2 else var1
+      resultados_grade[[length(resultados_grade) + 1]] <- tibble(
+        Variable           = otra,
+        Test               = r$test,
+        `Chi2 (sin Yates)` = round(r$chi2, 2),
+        `p-value`          = r$p_value,
+        `V de Cramer`      = round(r$v_cramer, 4),
+        `Supuesto OK`      = r$supuesto_valido,
+        `Freq. esp. min`   = round(r$freq_esp_min, 2)
+      )
+    } else {
+      resultados_pares[[length(resultados_pares) + 1]] <- tibble(
+        `Variable 1`      = var1,
+        `Variable 2`      = var2,
+        Test              = r$test,
+        `V de Cramer`     = round(r$v_cramer, 4),
+        phi               = round(r$phi, 4),
+        `phi max teórico` = round(r$phi_max, 4),
+        `phi / phi max`   = round(r$phi_norm, 4),
+        `p-value`         = r$p_value,
+        `Supuesto OK`     = r$supuesto_valido,
+        `Freq. esp. min`  = round(r$freq_esp_min, 2)
+      )
+    }
+  }
+}
+
+
+df_asociacion <- bind_rows(resultados_grade) |>
+  arrange(desc(`V de Cramer`))
+
+# Corrección por contrastes múltiples (Benjamini-Hochberg).
+# Se contrasta cada predictora contra el mismo objetivo, así que con 23 pruebas
+# a alfa = 0,05 cabe esperar algún p-valor pequeño solo por azar. Se controla la
+# tasa de falsos descubrimientos (FDR) y no la familiar: el objetivo aquí es
+# cribar candidatas para un modelo posterior, y descartar una buena cuesta más
+# que dejar pasar una dudosa, que el modelo ya filtrará. El q-valor es el
+# p-valor ajustado: la proporción esperada de falsos positivos si se corta ahí.
+#
+# La familia son los 23 contrastes del cribado, así que entra también la edad,
+# contrastada con Mann-Whitney por ser continua y no normal. Se corrige sobre
+# las 23 y después se recupera la columna de las 22 categóricas.
+p_edad <- wilcox.test(
+  train_data$Age_at_diagnosis[train_data$Grade == 0],
+  train_data$Age_at_diagnosis[train_data$Grade == 1],
+  alternative = "two.sided", exact = FALSE
+)$p.value
+
+q_todas <- p.adjust(c(df_asociacion$`p-value`, p_edad), method = "BH")
+df_asociacion$`q-value (BH)` <- head(q_todas, -1)
+df_asociacion$`Sobrevive BH` <- df_asociacion$`q-value (BH)` < 0.05
+
+q_edad <- tail(q_todas, 1)
+
+df_pares <- bind_rows(resultados_pares)
+
+# Resalta en amarillo las filas que no cumplen el supuesto de frecuencia
+# esperada >= 5.
+resaltar_supuesto <- function(kbl, supuesto_ok) {
+  filas <- which(!supuesto_ok)
+  if (length(filas) > 0) kbl <- kbl |> row_spec(filas, background = "#fff3cd")
+  kbl
+}
+```
+
+```{r tabla-asociacion-grade-eda}
+df_asociacion |>
+  mutate(`p-value`      = map_chr(`p-value`, num_p),
+         `q-value (BH)` = map_chr(`q-value (BH)`, num_p),
+         `Supuesto OK`  = si_no(`Supuesto OK`),
+         `Sobrevive BH` = si_no(`Sobrevive BH`)) |>
+  tabla_resultado("Asociación de cada predictora con Grade (χ² / Fisher y V de Cramér)",
+                  full_width = TRUE) |>
+  resaltar_supuesto(df_asociacion$`Supuesto OK`) |>
+  footnote(general = c(
+    "Filas en amarillo: no cumplen el supuesto de frecuencia esperada ≥ 5.",
+    sprintf("Edad al diagnóstico (Mann–Whitney, incluida en la corrección BH): p = %s; q = %s.",
+            num_p(p_edad), num_p(q_edad))),
+    general_title = "") |>
+  scroll_box(width = "100%")
+```
+
+```{r pares-asociados-eda}
+UMBRAL_V <- 0.40
+
+df_pares_asociados <- df_pares |>
+  filter(`V de Cramer` > UMBRAL_V) |>
+  arrange(desc(`V de Cramer`))
+
+n_inval_asociados <- sum(!df_pares_asociados$`Supuesto OK`)
+```
+
+Entre los pares de predictoras, `r nrow(df_pares_asociados)` superan una V de Cramér de `r num(UMBRAL_V)`, el umbral que aquí se toma como asociación mutua alta`r if (n_inval_asociados > 0) sprintf("; %d de ellos no cumplen el supuesto de frecuencia esperada ≥ 5 y aparecen resaltados en amarillo", n_inval_asociados) else ""`.
+
+```{r tabla-pares-asociados-eda}
+if (nrow(df_pares_asociados) > 0) {
+  df_pares_asociados |>
+    mutate(`p-value`     = map_chr(`p-value`, num_p),
+           `Supuesto OK` = si_no(`Supuesto OK`)) |>
+    tabla_resultado(sprintf("Pares de predictoras con asociación mutua alta (V > %s)",
+                            num(UMBRAL_V)), full_width = TRUE) |>
+    resaltar_supuesto(df_pares_asociados$`Supuesto OK`) |>
+    scroll_box(width = "100%")
+}
+```
+
+```{r diagnostico-multicolinealidad-eda, class.source = "fold-hide"}
+UMBRAL_R    <- 0.70
+UMBRAL_NORM <- 0.70
+
+n_inval <- sum(!df_pares$`Supuesto OK`)
+
+pares_binarios <- df_pares |> filter(!is.na(`phi max teórico`))
+alcanzables    <- sum(pares_binarios$`phi max teórico` >= UMBRAL_R)
+total_bin      <- nrow(pares_binarios)
+
+# Pares de predictoras con |r| de Spearman por encima del umbral (sin Grade)
+pares_altos <- list()
+columnas    <- colnames(spearman_corr)
+for (i in seq_along(columnas)) {
+  for (j in seq_len(i - 1)) {
+    r_val <- spearman_corr[i, j]
+    if (abs(r_val) > UMBRAL_R) {
+      pares_altos[[length(pares_altos) + 1]] <- tibble(
+        `Variable 1` = columnas[i], `Variable 2` = columnas[j], r = round(r_val, 4)
+      )
+    }
+  }
+}
+
+df_redundancias <- bind_rows(pares_altos)
+df_predictores_red <- if (nrow(df_redundancias) > 0) {
+  df_redundancias |> filter(`Variable 1` != "Grade", `Variable 2` != "Grade")
+} else {
+  df_redundancias
+}
+
+df_norm  <- df_pares |> filter(!is.na(`phi / phi max`))
+red_norm <- df_norm |>
+  filter(abs(`phi / phi max`) > UMBRAL_NORM) |>
+  arrange(desc(abs(`phi / phi max`)))
+
+pct <- function(x, total) sprintf("%d de %d (%s %%)", x, total, num(100 * x / total, 1))
+
+tibble(
+  Criterio = c(
+    "Pares de predictoras evaluados",
+    "Pares con frecuencia esperada < 5 (resueltos con Fisher exacto)",
+    sprintf("Pares binarios en los que |φ| ≥ %s es alcanzable", num(UMBRAL_R)),
+    sprintf("Pares con |r| de Spearman > %s", num(UMBRAL_R)),
+    sprintf("Pares con |φ / φ máx| > %s", num(UMBRAL_NORM)),
+    sprintf("Pares con V de Cramér > %s", num(UMBRAL_V))
+  ),
+  Resultado = c(
+    as.character(nrow(df_pares)),
+    pct(n_inval, nrow(df_pares)),
+    pct(alcanzables, total_bin),
+    as.character(nrow(df_predictores_red)),
+    as.character(nrow(red_norm)),
+    as.character(nrow(df_pares_asociados))
+  )
+) |>
+  tabla_resultado("Diagnóstico de redundancia entre predictoras", align = c("l", "r")) |>
+  column_spec(2, bold = TRUE)
+```
+
+La tabla resume varias formas de buscar predictoras redundantes. La tercera fila explica por qué no basta con un umbral absoluto sobre la correlación: con prevalencias tan desbalanceadas como las de estas mutaciones, el coeficiente φ de un par binario tiene un techo muy por debajo de 1, y solo en `r alcanzables` de los `r total_bin` pares es matemáticamente posible llegar a `r num(UMBRAL_R)`. Por eso, el resultado del criterio absoluto (`r nrow(df_predictores_red)` pares con |r| > `r num(UMBRAL_R)`) es esperable y no prueba por sí solo que no haya redundancia.
+
+El criterio normalizado corrige ese techo al dividir φ por el máximo alcanzable para cada par, y mide así qué tan cerca está la asociación de su valor más extremo posible. Con este criterio aparecen `r nrow(red_norm)` pares por encima de `r num(UMBRAL_NORM)`, que se listan a continuación.
+
+```{r tabla-spearman-alta-eda}
+if (nrow(df_predictores_red) > 0) {
+  tabla_resultado(df_predictores_red,
+                  sprintf("Pares de predictoras con |r| de Spearman > %s", num(UMBRAL_R)))
+}
+```
+
+```{r tabla-diagnostico-normalizado-eda}
+if (nrow(red_norm) > 0) {
+  red_norm |>
+    select(`Variable 1`, `Variable 2`, phi, `phi max teórico`,
+           `phi / phi max`, `V de Cramer`, `Supuesto OK`) |>
+    mutate(`Supuesto OK` = si_no(`Supuesto OK`)) |>
+    tabla_resultado(sprintf("Pares con redundancia relativa alta (|φ / φ máx| > %s)",
+                            num(UMBRAL_NORM))) |>
+    resaltar_supuesto(red_norm$`Supuesto OK`)
+}
+```
+
+`r sum(red_norm[["Variable 1"]] == "IDH1" | red_norm[["Variable 2"]] == "IDH1")` de estos `r nrow(red_norm)` pares involucran a `IDH1`. Los de signo negativo indican exclusión mutua (cuando una mutación está presente, la otra casi nunca lo está) y los de signo positivo, co-ocurrencia. En ningún caso esto significa que una variable sea una copia de otra: el φ absoluto sigue siendo moderado (el mayor es `r num(max(abs(red_norm$phi)), 2)`), así que cada una conserva información propia. La prueba de si esa redundancia afecta a un modelo es el factor de inflación de la varianza, que se calcula a continuación.
+
+#### Multicolinealidad conjunta: factor de inflación de la varianza
+
+Los criterios anteriores miran pares, y la multicolinealidad no es un fenómeno por pares: una variable puede ser casi reconstruible a partir de una combinación de varias sin parecerse a ninguna por separado. El factor de inflación de la varianza (VIF) responde a esa pregunta, porque regresa cada predictora contra todas las demás a la vez y mide cuánto se infla la varianza de su coeficiente por culpa de esa redundancia. Se interpreta con dos referencias habituales: por encima de 5 conviene vigilar, por encima de 10 el coeficiente deja de ser interpretable.
+
+```{r vif-eda}
+# VIF de cada predictora: 1 / (1 - R2) de regresarla contra las otras 22.
+predictoras <- setdiff(names(train_data), c("Grade", "Race"))
+X_vif <- train_data |>
+  select(all_of(predictoras)) |>
+  mutate(across(everything(), ~ as.numeric(as.character(.x))))
+
+df_vif <- map_dfr(predictoras, function(nombre) {
+  modelo <- lm(reformulate(setdiff(predictoras, nombre), response = nombre), data = X_vif)
+  r2 <- summary(modelo)$r.squared
+  tibble(Variable = nombre,
+         R2       = round(r2, 4),
+         VIF      = round(if (r2 < 1) 1 / (1 - r2) else Inf, 2))
+}) |>
+  arrange(desc(VIF))
+
+peor <- df_vif[1, ]
+
+df_vif |>
+  head(8) |>
+  mutate(R2  = num(R2, 4),
+         Lectura = case_when(VIF >= 10 ~ "Grave (≥ 10)",
+                             VIF >= 5  ~ "Vigilar (≥ 5)",
+                             TRUE      ~ "Sin problema (< 5)"),
+         VIF = num(VIF, 2)) |>
+  tabla_resultado("Factor de inflación de la varianza (8 valores más altos)",
+                  align = c("l", "r", "r", "l")) |>
+  column_spec(3, bold = TRUE)
+```
+
+El VIF más alto es `r num(peor$VIF)`, en `r peor$Variable`, muy por debajo del umbral de vigilancia de 5.
+
+El análisis bivariado y de correlación de Spearman sobre el conjunto de entrenamiento ($n = 671$) revela asociaciones clínico-moleculares relevantes entre los Gliomas de Bajo Grado (LGG) y el Glioblastoma Multiforme (GBM).
+
+### Asociaciones con la severidad tumoral (`Grade`)
+
+**Asociaciones con LGG.** La mutación en `IDH1` presenta la mayor capacidad discriminativa en sentido inverso respecto a la severidad tumoral ($r = -0,70$, $V \approx 0,70$, $p < 0,001$). Le siguen `ATRX` ($r = -0,33$, $V \approx 0,32$) y `CIC` ($r = -0,31$, $V \approx 0,31$).
+
+**Asociaciones con GBM.** `Age_at_diagnosis` constituye el principal correlato clínico directo con la severidad ($r = +0,53$), lo que refleja una mayor frecuencia de GBM en edades avanzadas. Entre las variables genéticas, `PTEN` presenta la asociación más fuerte ($V = 0,3654$, $r = +0,37$), seguido de `EGFR` ($V = 0,2059$, $r = +0,21$) y `RB1` ($V = 0,1794$, $r = +0,18$).
+
+**Variables sin asociación significativa.** Las variables con $p > 0,05$ en la prueba de Chi-cuadrado, valores de $V < 0,08$ y magnitudes de $\lvert r \rvert < 0,10$, entre ellas `PDGFRA`, `NF1`, `Gender`, `CSMD3`, `BCOR`, `PIK3CA` y `FAT4`, presentan asociaciones débiles o insignificantes con `Grade`. Estos resultados respaldan su exclusión como variables prioritarias en la selección del conjunto de predictores.
+
+### Interacciones entre variables genéticas
+
+Para las asociaciones entre mutaciones, se identificaron patrones de co-ocurrencia con valores de $V > 0,40$.
+
+- **`ATRX`–`TP53`** presenta la mayor fuerza de asociación mutua ($V = 0,5475$).
+- **`FUBP1`–`CIC`** muestra una asociación de $V = 0,4681$.
+- **`ATRX`–`IDH1`** alcanza un valor de $V = 0,4596$.
+
+Estas relaciones reflejan patrones de co-ocurrencia entre determinados marcadores genéticos dentro del conjunto analizado.
+
+El factor de inflación de la varianza confirma por la vía conjunta lo que sugieren los pares: ninguna predictora es reconstruible a partir de las demás, con un VIF máximo de `r num(peor$VIF)` en `r peor$Variable`, muy por debajo del umbral de 5. El panel retenido puede entrar completo en un modelo sin que los coeficientes se vuelvan inestables.
+
+Sobre los contrastes múltiples, la tabla de asociación incorpora el q-valor de Benjamini-Hochberg: las asociaciones que superan el umbral sin corregir lo siguen superando después de corregir, de modo que el panel de variables relevantes no depende de ese ajuste.
+
+Por otra parte, la relación entre **`PTEN` e `IDH1`** ($V = 0,4068$) presenta un patrón de exclusión mutua, asociado a la distribución diferencial de estas alteraciones entre los grupos LGG y GBM.

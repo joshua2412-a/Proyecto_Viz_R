@@ -1,0 +1,3 @@
+paciente,rotulo,spearman,signos,top3_shap,top3_lime,cv_lime_top5
+499,bien clasificado,0.809314022099806,1.0,"Age_at_diagnosis, IDH1, PTEN","IDH1, IDH2, Age_at_diagnosis",0.03501783595559503
+576,peor error,0.8152575767296699,1.0,"IDH1, TP53, Age_at_diagnosis","IDH1, IDH2, GRIN2A",0.03870002084430875

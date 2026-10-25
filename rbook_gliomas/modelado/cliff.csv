@@ -1,0 +1,7 @@
+comparacion,delta_sel,magnitud_sel,delta_familia,magnitud_familia
+Regresión Logística vs Random Forest,-0.08,despreciable,-0.074609375,despreciable
+Regresión Logística vs XGBoost,-0.05,despreciable,0.0366796875,despreciable
+Random Forest vs XGBoost,0.07,despreciable,0.0637109375,despreciable
+Grid Search vs Random Search,,,-0.01923611111111111,despreciable
+Bayesiano (TPE) vs Random Search,,,-0.006805555555555555,despreciable
+Genético (DEAP) vs Random Search,,,-0.05645833333333333,despreciable
