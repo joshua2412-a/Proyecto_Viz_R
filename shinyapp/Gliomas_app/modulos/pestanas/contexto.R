@@ -56,7 +56,7 @@ ui_contexto <- function() {
             span(tags$b("GBM · glioblastoma multiforme. "),
                  paste("El glioma más agresivo: crecimiento rápido, pronóstico corto y",
                        "necesidad de tratamiento intensivo inmediato. Se concentra en",
-                       "edades avanzadas y presenta alteraciones en PTEN, EGFR o TP53."))
+                       "edades avanzadas y presenta con más frecuencia alteraciones en PTEN y EGFR."))
           )),
           paragraph(paste(
             "Hasta hace poco el grado se establecía por histología e imagen. La",

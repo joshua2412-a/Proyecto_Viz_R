@@ -35,7 +35,7 @@ resultados_tabla_asociacion <- function(ambito) {
   formato_p <- function(v) if (v < 0.0001) "< 0,0001" else num(v, 4)
   filas <- lapply(seq_len(nrow(datos)), function(i) {
     f <- datos[i, ]
-    c(f$variable, f$prueba, num(f$rho, 3, signo = TRUE),
+    c(nombre_corto(f$variable), f$prueba, num(f$rho, 3, signo = TRUE),
       if (is.na(f$v_cramer)) "—" else num(f$v_cramer, 3),
       formato_p(f$p_valor), formato_p(f$q_valor),
       if (is.na(f$rho)) "—" else if (f$rho < 0) "LGG" else "GBM")
@@ -52,7 +52,7 @@ resultados_tabla_vif <- function(ambito) {
     c("Predictora", "$R^2$ contra las demás", "VIF", "Lectura"),
     lapply(seq_len(nrow(datos)), function(i) {
       f <- datos[i, ]
-      c(f$variable, num(f$r2, 3), num(f$vif, 2),
+      c(nombre_corto(f$variable), num(f$r2, 3), num(f$vif, 2),
         if (f$vif < 5) "Sin problema" else if (f$vif < 10) "Conviene mirarlo" else "Inestable")
     })
   )
@@ -101,8 +101,8 @@ resultados_bloque_eda <- function(ambito) {
     fila(
       columna(lg = 7, class = "mb-4",
               graph_card("fig_res_asociacion", "Asociación de cada variable con el grado",
-                         paste("Signo negativo = empuja hacia LGG. Las barras rayadas no alcanzan",
-                               "significancia estadística ($p \\geq 0{,}05$ o $|r| < 0{,}10$). El grupo racial",
+                         paste("Signo negativo = empuja hacia LGG. Las barras rayadas no superan",
+                               "los dos filtros ($p \\geq 0{,}05$ o $|r| < 0{,}10$). El grupo racial",
                                "aparece reagrupado en dos niveles, que es como el libro lo",
                                "correlaciona."))),
       columna(lg = 5, class = "mb-4",
@@ -112,7 +112,7 @@ resultados_bloque_eda <- function(ambito) {
       resultados_tabla_asociacion(ambito),
       titulo = "Las variables más asociadas al grado",
       subtitulo = paste0(toupper(substr(nombre_ambito, 1, 1)), substring(nombre_ambito, 2),
-                         " · las diez de mayor $|\\rho|$"),
+                         " · las diez de mayor $|r|$"),
       class = "mb-4"
     ),
     section_title("Correlación entre todas las variables"),
@@ -164,8 +164,7 @@ resultados_bloque_eda <- function(ambito) {
       paste("Las dos figuras de arriba miran pares, y la multicolinealidad no es un",
             "fenómeno por pares: una variable puede ser casi predecible a partir de una",
             "combinación de otras sin parecerse a ninguna por separado. El VIF responde a",
-            "esa pregunta, y es el mismo cálculo que cierra la sección de",
-            "multicolinealidad del libro."),
+            "esa pregunta."),
       titulo = "Por qué no basta con mirar pares"
     ),
     fila(
@@ -192,27 +191,13 @@ ui_resultados <- function() {
     section_title("Análisis exploratorio"),
     callout(
       paste0("Todo lo que sigue se calcula sobre el conjunto de entrenamiento (",
-             tamanos_particion()[["train"]], " pacientes), igual que en el libro. El resto se ",
-             "apartó antes de mirar nada y aquí no se cruza con el grado: si estas pruebas se ",
-             "corrieran también sobre él, la evaluación de los modelos dejaría de ser ",
-             "independiente, porque las variables se habrían elegido sabiendo lo que ese ",
-             "conjunto decía. Para comprobar que la partición quedó repartida de forma ",
-             "parecida, la pestaña Exploración permite comparar la distribución de cada ",
-             "variable entre los tres conjuntos, sin cruzarla con el grado."),
+             tamanos_particion()[["train"]], " pacientes). El de prueba se apartó antes ",
+             "de mirar nada y no se cruza con el grado, para que la evaluación de ",
+             "los modelos siga siendo independiente."),
       titulo = "Sobre qué datos está hecho este análisis"
     ),
     div(class = "mb-3", series_chips()),
-    resultados_bloque_eda("train"),
-    callout(
-      tagList(
-        paste("Estos hallazgos son la materia prima del modelado: con el conjunto de prueba",
-              "ya reservado, se entrenaron tres clasificadores y se midió cuánto rinden con",
-              "pacientes nuevos y con un panel reducido. "),
-        enlace_pestana(destino = "tab-modelos", class = "btn btn-link p-0 align-baseline link-externo",
-                       "Ver la pestaña Modelos →")
-      ),
-      titulo = "Qué viene después"
-    )
+    resultados_bloque_eda("train")
   )
 }
 

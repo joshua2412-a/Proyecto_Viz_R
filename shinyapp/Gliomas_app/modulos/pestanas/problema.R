@@ -11,7 +11,7 @@ problema_v_de <- function(variable) {
 
 problema_rho_de <- function(variable) {
   a <- asociacion_con_grado(AMBITO_EDA)
-  num(a$rho[a$variable == variable], 2, signo = TRUE)
+  tnum(a$rho[a$variable == variable], 2, signo = TRUE)
 }
 
 problema_tabla_senal <- function() {
@@ -22,8 +22,10 @@ problema_tabla_senal <- function() {
     c("Grupo", "Variables", "Cuáles"),
     list(
       c("Con señal ($p < 0{,}05$ y $|r| \\geq 0{,}10$)", as.character(nrow(con)),
-        paste(con$variable, collapse = ", ")),
-      c("Sin señal apreciable", as.character(nrow(sin)), paste(sin$variable, collapse = ", "))
+        # Las clínicas en español, como en el resto de la aplicación
+        paste(nombre_corto(con$variable), collapse = ", ")),
+      c("Sin señal apreciable", as.character(nrow(sin)),
+        paste(nombre_corto(sin$variable), collapse = ", "))
     )
   )
 }
@@ -81,18 +83,18 @@ ui_problema <- function() {
       paragraph(paste(
         "Cruzando cada predictora con el grado tumoral en el conjunto de entrenamiento,",
         "las variables se reparten en dos grupos muy desiguales. Las que no alcanzan",
-        "significancia estadística ni una magnitud mínima de asociación aportan una",
+        "significancia estadística o una magnitud mínima de asociación aportan una",
         "varianza explicativa insignificante, y son las primeras candidatas a salir del panel.")),
       problema_tabla_senal(),
       bullet_list(list(
         paste0("IDH1 es el marcador con mayor capacidad discriminativa y de signo inverso a ",
-               "la malignidad (r = ", problema_rho_de("IDH1"), "): su mutación es ",
+               "la malignidad ($r = ", problema_rho_de("IDH1"), "$): su mutación es ",
                "prácticamente una firma de glioma de bajo grado."),
         paste0("La edad al diagnóstico es el principal correlato clínico directo con la ",
-               "severidad (r = ", problema_rho_de("Age_at_diagnosis"), ")."),
+               "severidad ($r = ", problema_rho_de("Age_at_diagnosis"), "$)."),
         paste0("PTEN es el marcador de riesgo genómico más sólido (V de Cramér = ",
                problema_v_de("PTEN"), "), seguido de EGFR y RB1."),
-        paste0(lista_y(sin_senal), " no muestran asociación apreciable con el grado en esta muestra.")
+        paste0(lista_y(nombre_corto(sin_senal)), " no muestran asociación apreciable con el grado en esta muestra.")
       )),
       titulo = "Reparto de las 23 predictoras",
       subtitulo = "Conjunto de entrenamiento · Spearman y chi-cuadrado"

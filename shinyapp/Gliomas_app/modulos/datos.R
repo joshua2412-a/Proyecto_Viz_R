@@ -471,7 +471,7 @@ prueba_bivariada <- function(variable, ambito = "train") {
     detalle <- list(
       c("Hipótesis nula", "Las dos distribuciones de la variable son iguales en LGG y en GBM."),
       c("Estadístico $U$", miles(mw$estadistico)),
-      c("Tamaño del efecto", paste0("$\\rho$ de Spearman $= ", tnum(rho, 3, signo = TRUE), "$")),
+      c("Tamaño del efecto", paste0("$r$ de Spearman $= ", tnum(rho, 3, signo = TRUE), "$")),
       c("Medianas", paste0("LGG ", num(stats::median(lgg)), " · GBM ", num(stats::median(gbm)))),
       c("Normalidad (Shapiro-Wilk)", p_tex(p_normalidad))
     )
@@ -480,7 +480,7 @@ prueba_bivariada <- function(variable, ambito = "train") {
       motivo = paste("La variable es continua y no sigue una distribución normal,",
                      "así que se comparan rangos en vez de medias."),
       p_valor = mw$p_valor, rho = rho, v_cramer = NA_real_, magnitud = abs(rho),
-      magnitud_nombre = "$|\\rho|$ de Spearman",
+      magnitud_nombre = "$|r|$ de Spearman",
       significativa = isTRUE(mw$p_valor < ALFA && abs(rho) >= EFECTO_MINIMO),
       detalle = detalle, direccion = direccion, hay_direccion = TRUE, nota_metodo = ""
     ))
@@ -504,7 +504,7 @@ prueba_bivariada <- function(variable, ambito = "train") {
                                if (r$gl != 1) "s" else "", " de libertad")),
     c("Frecuencia esperada mínima", num(r$esperada_min, 1)),
     c("Tamaño del efecto", paste("V de Cramér =", num(r$v_cramer, 3))),
-    c("Dirección", paste0("$\\rho$ de Spearman $= ", tnum(rho, 3, signo = TRUE), "$",
+    c("Dirección", paste0("$r$ de Spearman $= ", tnum(rho, 3, signo = TRUE), "$",
                           if (variable == "Race") " (sobre la versión reagrupada)" else ""))
   )
   nota <- ""
@@ -525,7 +525,7 @@ prueba_bivariada <- function(variable, ambito = "train") {
   }
   list(
     prueba = nombre_prueba, motivo = motivo, p_valor = r$p_valor, rho = rho,
-    v_cramer = r$v_cramer, magnitud = abs(rho), magnitud_nombre = "$|\\rho|$ de Spearman",
+    v_cramer = r$v_cramer, magnitud = abs(rho), magnitud_nombre = "$|r|$ de Spearman",
     significativa = isTRUE(r$p_valor < ALFA && abs(rho) >= EFECTO_MINIMO),
     detalle = detalle, direccion = direccion, hay_direccion = TRUE, nota_metodo = nota
   )
@@ -604,7 +604,7 @@ lectura_bivariada <- function(variable, ambito = "train") {
              sprintf("%.0f", gbm), " en GBM: una diferencia de ",
              sprintf("%.0f", abs(gbm - lgg)), " años, y la U de Mann-Whitney la ",
              "da por distinguible del azar (", p_valor(prueba$p_valor), ")."),
-      paste0("La magnitud de la asociación es $\\rho = ", tnum(prueba$rho, 2, signo = TRUE),
+      paste0("La magnitud de la asociación es $r = ", tnum(prueba$rho, 2, signo = TRUE),
              "$, el correlato clínico más fuerte del panel, aunque no separa los grupos ",
              "por sí sola: las dos distribuciones se solapan ampliamente.")
     ))
@@ -730,7 +730,7 @@ lectura_asociacion <- function(ambito = "train") {
     paste0(", y ", sin_direccion, " no tienen dirección por ser nominales.")
   } else "."
   c(
-    paste0(primera$variable, " encabeza el ranking con $\\rho = ", tnum(primera$rho, 2, signo = TRUE),
+    paste0(nombre_corto(primera$variable), " encabeza el ranking con $r = ", tnum(primera$rho, 2, signo = TRUE),
            "$, de signo ", if (primera$rho < 0) "negativo, así que empuja hacia LGG."
            else "positivo, así que empuja hacia GBM."),
     paste0(nrow(con_senal), " de las ", nrow(a), " predictoras superan a la vez ",
@@ -767,9 +767,9 @@ lectura_correlaciones <- function(ambito = "train") {
   c(
     paste0("La primera fila y la primera columna son lo que importa para el ",
            "objetivo: la correlación de cada variable con el grado. La mayor es ",
-           mas_fuerte, " con r = ", num(con_grado[[mas_fuerte]], 2, signo = TRUE), "."),
-    paste0("Entre predictoras, la correlación más alta es ", nombres[pos[1]], " con ",
-           nombres[pos[2]], " (r = ", num(entre[pos[1], pos[2]], 2, signo = TRUE), "), y ",
+           nombre_corto(mas_fuerte), " con r = ", num(con_grado[[mas_fuerte]], 2, signo = TRUE), "."),
+    paste0("Entre predictoras, la correlación más alta es ", nombre_corto(nombres[pos[1]]), " con ",
+           nombre_corto(nombres[pos[2]]), " (r = ", num(entre[pos[1], pos[2]], 2, signo = TRUE), "), y ",
            sum(abs(superiores) < 0.20), " de los ", length(superiores),
            " pares se quedan por debajo de 0,20 en valor absoluto. El panel es ",
            "mayoritariamente de variables que aportan información distinta."),
@@ -794,12 +794,12 @@ lectura_multicolinealidad <- function(ambito = "train") {
           "mide el factor de inflación de la varianza, que regresa cada",
           "predictora contra todas las demás."),
     if (sobre_cinco == 0) {
-      paste0("El VIF más alto es ", num(peor$vif, 2), ", en ", peor$variable, ", muy ",
+      paste0("El VIF más alto es ", num(peor$vif, 2), ", en ", nombre_corto(peor$variable), ", muy ",
              "por debajo de 5. Las 23 predictoras pueden entrar juntas en un modelo ",
              "sin que sus coeficientes se vuelvan inestables.")
     } else {
       paste0(sobre_cinco, " predictoras superan un VIF de 5, la más alta ",
-             peor$variable, " con ", num(peor$vif, 2), ": ahí sí conviene mirar ",
+             nombre_corto(peor$variable), " con ", num(peor$vif, 2), ": ahí sí conviene mirar ",
              "antes de meterlas todas juntas en un modelo lineal.")
     }
   )

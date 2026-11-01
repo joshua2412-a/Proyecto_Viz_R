@@ -6,7 +6,7 @@ logística, Random Forest y XGBoost), que aquí predicen y se explican con R bas
 
 ## Qué hay en esta versión
 
-Va a la par del tablero de Dash (estado del 28 de octubre):
+Va a la par del tablero de Dash (estado del 1 de noviembre):
 
 * **Portada animada**: un cerebro de partículas con el glioma dentro
   (`www/intro.js`, WebGL sin librerías; `modulos/portada.R` arma el marcado).
@@ -25,6 +25,14 @@ Va a la par del tablero de Dash (estado del 28 de octubre):
   las probabilidades salen en mosaicos, «Dónde cae este perfil» es un enjambre
   de partículas con los pacientes de prueba (`www/enjambre.js`) y la sección
   "Cómo decide" sigue al modelo elegido arriba.
+* **Glía, la asistente**: un astrocito de partículas en la esquina inferior
+  derecha (`www/glia.js`) que abre un panel de conversación en todas las
+  pestañas, con preguntas sugeridas por pestaña, un chip «Pregúntale a Glía»
+  en cada gráfico y la lectura de la predicción. Las respuestas guiadas
+  (`modulos/asistente.R`) funcionan siempre; si el servidor tiene la clave
+  `GEMINI_API_KEY`, el texto libre lo responde Gemini (ver «Activar Gemini»).
+* **Navegación**: el título de la barra vuelve a la portada, y el viaje de
+  las partículas entre pestañas es el largo del tablero (1,7 s).
 * **Orden de las pestañas**: Inicio · 01 El contexto · 02 El método ·
   03 Los resultados (Resultados, Modelos, Predicción) · 04 El cierre
   (Limitaciones, Conclusiones) · Anexo.
@@ -40,7 +48,7 @@ hacen los callbacks de cliente.
 Desde la carpeta raíz del repositorio (`Proyecto_Viz_R`):
 
 ```r
-install.packages(c("shiny", "bslib", "plotly", "jsonlite"))
+install.packages(c("shiny", "bslib", "plotly", "jsonlite", "httr2"))
 shiny::runApp("shinyapp/Gliomas_app")
 ```
 
@@ -56,6 +64,20 @@ rsconnect::deployApp("shinyapp/Gliomas_app", appName = "gliomas")
 
 Los datos van dentro de `data/`, así que la app no depende de ninguna otra
 carpeta del repositorio.
+
+## Activar Gemini en Glía
+
+Sin clave, Glía da sus respuestas guiadas. Para que responda el texto libre con
+Gemini (clave gratuita de Google AI Studio, de un proyecto sin facturación):
+
+1. Crea el archivo `shinyapp/Gliomas_app/.Renviron` con una sola línea:
+   `GEMINI_API_KEY=tu_clave`. Git lo ignora: la clave nunca va al repositorio.
+2. En local, reinicia R para que lo lea. En shinyapps.io, `deployApp()` sube
+   el archivo con la app y el servidor lo lee al arrancar.
+
+Si se agota la cuota o falla la red, Glía lo dice y responde con la guía. En el
+plan gratuito, Google puede usar lo que se le envía para mejorar sus productos
+(aquí, cifras públicas y las preguntas).
 
 ## Estructura
 
@@ -74,8 +96,10 @@ Gliomas_app/
 │   ├── figuras.R       figuras del EDA
 │   ├── modelo.R        predicción con los modelos exportados y TreeSHAP
 │   ├── figuras_modelo.R figuras de Modelos y Predicción
+│   ├── asistente.R     Glía: preguntas frecuentes, glosario, predicción y Gemini
+│   ├── asistente_panel.R Glía: el panel y la conversación
 │   └── pestanas/       una función ui_*() (y server_*() si hace falta) por pestaña
-├── www/                style.css (la del Dash), shiny.css, JS de navegación, portada.svg
+├── www/                style.css (la del Dash), shiny.css, JS de navegación y de Glía, portada.svg
 └── data/
     ├── TCGA_InfoWithGrade.csv
     ├── train_data.csv          partición 80/20 del proyecto (671 pacientes)

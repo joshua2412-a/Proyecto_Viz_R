@@ -288,7 +288,7 @@
     if (raton.on && raton.y > c.R.top && raton.y < c.R.bottom && raton.x > A.x0 && raton.x < A.x0 + A.an) mano = (raton.x - A.x0) / A.an;
     // El rótulo va siempre a la derecha del cursor (el autor no quiere que
     // cambie de lado): el cursor no pasa de donde ese rótulo aún cabe
-    var tope = Math.min(1, (c.x + c.w - 74 - A.x0) / A.an);
+    var tope = Math.min(1, (c.x + c.w - 84 - A.x0) / A.an);
     var meta = Math.min(tope, mano !== null ? mano : 0.05 + (auto - 0.05) * (tope - 0.05) / 0.9);
     EF.uEdad = EF.uEdad === undefined || reducir ? meta : lerp(EF.uEdad, meta, mano !== null ? 0.25 : 0.06);
   }
@@ -620,8 +620,8 @@
 
   // ---- Conclusiones: de 23 variables a 4 --------------------------------
   // Las 19 que no hacen falta se deshacen y caen; IDH1, edad, TP53 y PTEN
-  // crecen hasta el tamaño de su importancia en XGBoost (43,0 · 13,1 · 12,2
-  // · 5,3) y el AUC apenas baja: 0,923 con las 23, 0,915 con las 4.
+  // crecen hasta el tamaño de su importancia en XGBoost (42,3 · 14,0 · 12,4
+  // · 5,4) y el AUC apenas baja: 0,920 con las 23, 0,906 con las 4 (0,9065).
   var VARS23 = ["Género", "Edad", "Raza", "IDH1", "TP53", "ATRX", "PTEN", "EGFR", "CIC", "MUC16", "PIK3CA", "NF1",
                 "PIK3R1", "FUBP1", "RB1", "NOTCH1", "BCOR", "CSMD3", "SMARCA4", "GRIN2A", "IDH2", "FAT4", "PDGFRA"];
   var QUEDAN = { "IDH1": [42.98, "g", 0], "Edad": [13.11, "l", 1], "TP53": [12.21, "g", 2], "PTEN": [5.34, "l", 3] };
@@ -672,7 +672,9 @@
   // Rótulos de las figuras con datos (se dibujan ya colocadas)
   var AREA_EDAD = { g: 0, l: 0 };
   ["g", "l"].forEach(function (k) { for (var i = 1; i < DENS[k].length; i++) AREA_EDAD[k] += (DENS[k][i - 1] + DENS[k][i]) / 2; });
-  var MONO = "500 10px 'IBM Plex Mono', ui-monospace, monospace", SANS = "600 11px 'Plus Jakarta Sans', system-ui, sans-serif";
+  // 12 y 13 px: a 10 y 11 eran la letra más pequeña del tablero (el CSS no
+  // baja de 12) y el profesor pidió subir los tamaños pequeños.
+  var MONO = "500 12px 'IBM Plex Mono', ui-monospace, monospace", SANS = "600 13px 'Plus Jakarta Sans', system-ui, sans-serif";
   function rotulos(fig, c, alfa) {
     if (alfa < 0.05) return;
     ctx.globalCompositeOperation = "source-over";
@@ -698,18 +700,18 @@
       var dg = 389 * densidad("g", u) / AREA_EDAD.g, dl = 282 * densidad("l", u) / AREA_EDAD.l, pg = dl / ((dg + dl) || 1);
       var xs = x + 8, lado = "left", y0 = E.base - E.alto + 4;
       texto(Math.round(10 + u * 80) + " años", xs, y0, "rgba(238, 243, 249," + a3 + ")", SANS, lado);
-      texto("LGG " + Math.round((1 - pg) * 100) + " %", xs, y0 + 14, azul, MONO, lado);
-      texto("GBM " + Math.round(pg * 100) + " %", xs, y0 + 27, coral, MONO, lado);
-      if (!c.estrecho) texto("edad al diagnóstico", E.x0 + E.an, E.base + 30, tinta, MONO, "right");
+      texto("LGG " + Math.round((1 - pg) * 100) + " %", xs, y0 + 17, azul, MONO, lado);
+      texto("GBM " + Math.round(pg * 100) + " %", xs, y0 + 32, coral, MONO, lado);
+      if (!c.estrecho) texto("Edad al diagnóstico (años)", E.x0 + E.an, E.base + 33, tinta, MONO, "right");
     }
     if (fig === "secuenciador" && !c.estrecho) {
-      texto("una muestra cada vez", c.x + c.w * 0.25, c.y + c.h - 2);
-      texto("secuencia leída · 20 genes", c.x + c.w * 0.76, c.y + c.h * 0.5 - 18);
+      texto("Una muestra cada vez", c.x + c.w * 0.25, c.y + c.h - 2);
+      texto("Secuencia leída · 20 genes", c.x + c.w * 0.76, c.y + c.h * 0.5 - 18);
     }
     if (fig === "dardos") {
       var D = centroDiana(c), f = (est.tf || 0) % CICLO_DIANA, j = Math.min(TIROS, Math.floor(f / DUR_TIRO) + 1);
-      texto("intento " + j + " de " + TIROS, D.cx + D.R + 14, D.cy - 4, tinta, MONO, "left");
-      if (j === TIROS && !c.estrecho) texto("panel mínimo", D.cx + D.R + 14, D.cy + 10, coral, MONO, "left");
+      texto("Intento " + j + " de " + TIROS, D.cx + D.R + 14, D.cy - 4, tinta, MONO, "left");
+      if (j === TIROS && !c.estrecho) texto("Panel mínimo", D.cx + D.R + 14, D.cy + 12, coral, MONO, "left");
     }
     if (fig === "sonda" && EF.sonda && EF.sonda.k >= 0) {
       var G = SONDA[EF.sonda.k], col = G[3] < 0 ? "143, 184, 242" : "255, 148, 114", aa = (alfa * EF.sonda.en).toFixed(3);
@@ -740,7 +742,7 @@
       var A = arbolPlinko(c), fk = (est.tf || 0) % CICLO_K, n = 0;
       for (var i = 0; i < N_PK; i++) if (reducir || fk - parts[i].pkSale > 1.3) n++;
       var aciertos = PK.okLgg + PK.okGbm, bien = Math.round(n * aciertos / N_PK);
-      if (!c.estrecho) texto("regresión logística · prueba", c.x + c.w * 0.5 - A.ancho / 2, A.y0 + 4, tinta, MONO, "left");
+      if (!c.estrecho) texto("Regresión logística · prueba", c.x + c.w * 0.5 - A.ancho / 2, A.y0 + 4, tinta, MONO, "left");
       texto(n + " de " + N_PK + " · " + bien + " aciertos" + (n === N_PK ? " (" + coma(aciertos / N_PK * 100, 1) + " %)" : ""), c.x + c.w * 0.5 + A.ancho / 2, A.y0 + 4, tinta, MONO, "right");
     }
     if (fig === "paciente") {
@@ -748,7 +750,7 @@
       texto("LGG · 487", P.cxL, cy + P.rmax + 16, azul, SANS);
       texto("GBM · 352", P.cxG, cy + P.rmax * Math.sqrt(N_GBM / N_LGG) + 16, coral, SANS);
       texto("P(GBM) " + coma(P.pp * 100, 1) + " %", P.x, P.y - 18, "rgba(238, 243, 249," + a3 + ")", MONO);
-      if (P.hueco > 150) texto("tu paciente", P.x, P.y + 26, tinta, MONO);
+      if (P.hueco > 150) texto("Tu paciente", P.x, P.y + 28, tinta, MONO);
     }
     if (fig === "rebotes") {
       texto("839 pacientes · una sola fuente (TCGA)", c.x + c.w * 0.5, c.y + c.h - 2);
@@ -768,7 +770,7 @@
       var L = centroLupa(c, est.tv), paso = c.w / VARIABLES.length;
       var k = Math.max(0, Math.min(VARIABLES.length - 1, Math.floor((L[0] - c.x) / paso)));
       var RL = Math.min(c.h * 0.36, c.w * 0.2), d = DIRECCION[VARIABLES[k]];
-      texto(VARIABLES[k], L[0], L[1] - RL - 10, d === "g" ? azul : (d === "l" ? coral : tinta), "600 11px 'IBM Plex Mono', ui-monospace, monospace");
+      texto(VARIABLES[k], L[0], L[1] - RL - 10, d === "g" ? azul : (d === "l" ? coral : tinta), "600 12px 'IBM Plex Mono', ui-monospace, monospace");
     }
     if (fig === "libro") {
       var B = paginaLibro(c);
@@ -881,11 +883,89 @@
   var W = 0, H = 0, dpr = 1;
   function medir() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
-    W = window.innerWidth; H = window.innerHeight;
+    // Ancho SIN la barra de desplazamiento: es lo que ocupa el lienzo en
+    // pantalla. Con innerWidth (que la incluye) el dibujo de 1440 px se
+    // comprimía en 1425 y quedaba ~1 % corrido a la izquierda; se notaba
+    // como un salto a la derecha al pasar la figura al lienzo de la cabecera.
+    W = document.documentElement.clientWidth || window.innerWidth; H = window.innerHeight;
     lienzo.width = Math.round(W * dpr); lienzo.height = Math.round(H * dpr);
+    lienzo.style.width = W + "px"; lienzo.style.height = H + "px";
     est.forzar = true;   // cambiar el tamaño del lienzo lo borra
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     document.documentElement.style.setProperty("--ancho-util", document.documentElement.clientWidth + "px");
+  }
+
+  // Lienzo de la cabecera. La figura ya colocada se dibuja aquí, dentro de
+  // la propia cabecera, y no en el lienzo fijo: el navegador desplaza la
+  // cabecera aunque la página esté ocupada (p. ej. Plotly dibujando los
+  // gráficos aplazados al bajar), pero un lienzo fijo solo se mueve cuando
+  // se repinta. Al bajar rápido, sus rótulos se quedaban fuera de la franja.
+  // El lienzo fijo sigue para el viaje entre pestañas, la Introducción y la
+  // barra de progreso.
+  var lienzoCab = document.createElement("canvas");
+  lienzoCab.className = "banda-particulas-cab";
+  lienzoCab.setAttribute("aria-hidden", "true");
+  var ctxCab = lienzoCab.getContext("2d"), ctxFijo = ctx, cabSucio = false;
+  function prepararCab(cab) {
+    var R = cab.getBoundingClientRect();
+    // React puede cambiar el nodo de la cabecera al cambiar de pestaña
+    if (lienzoCab.parentNode !== cab) cab.appendChild(lienzoCab);
+    var w = Math.round(R.width * dpr), h = Math.round(R.height * dpr);
+    if (lienzoCab.width !== w || lienzoCab.height !== h) {
+      lienzoCab.width = w; lienzoCab.height = h;
+      lienzoCab.style.width = R.width + "px"; lienzoCab.style.height = R.height + "px";
+    }
+    ctxCab.setTransform(1, 0, 0, 1, 0, 0);
+    ctxCab.globalCompositeOperation = "source-over"; ctxCab.globalAlpha = 1;
+    ctxCab.clearRect(0, 0, w, h);
+    // Se sigue dibujando en coordenadas de la ventana: la transformación
+    // las lleva a las de la cabecera
+    ctxCab.setTransform(dpr, 0, 0, dpr, -R.left * dpr, -R.top * dpr);
+    ctxCab.globalCompositeOperation = "lighter";
+    cabSucio = true;
+  }
+  function limpiarCab() {
+    if (!cabSucio) return;
+    ctxCab.setTransform(1, 0, 0, 1, 0, 0);
+    ctxCab.clearRect(0, 0, lienzoCab.width, lienzoCab.height);
+    cabSucio = false;
+  }
+
+  // Lienzo de la barra de progreso, dentro del índice. El índice es sticky:
+  // en el rebote elástico al tirar más allá del principio o del final de la
+  // página se desplaza con ella, y el lienzo fijo no, así que la barra se
+  // salía de su sitio. Dentro del índice se mueve con él. Los peldaños
+  // (botones y etiqueta) van en el mismo índice por la misma razón. Mientras
+  // las partículas llegan volando desde la cabecera se sigue usando el
+  // lienzo fijo: el del índice las cortaría por fuera de su caja.
+  var lienzoProg = document.createElement("canvas");
+  lienzoProg.className = "banda-progreso";
+  lienzoProg.setAttribute("aria-hidden", "true");
+  var ctxProg = lienzoProg.getContext("2d"), progSucio = false, MARGEN_PROG = 24;
+  function prepararProg(nav) {
+    var R = nav.getBoundingClientRect();
+    est.navProg = R;
+    if (lienzoProg.parentNode !== nav) nav.appendChild(lienzoProg);
+    if (capa.parentNode !== nav) { nav.appendChild(capa); capaRect = ""; }
+    var w = Math.round(R.width * dpr), h = Math.round((R.height + 2 * MARGEN_PROG) * dpr);
+    if (lienzoProg.width !== w || lienzoProg.height !== h) {
+      lienzoProg.width = w; lienzoProg.height = h;
+      lienzoProg.style.width = R.width + "px";
+      lienzoProg.style.height = (R.height + 2 * MARGEN_PROG) + "px";
+      lienzoProg.style.top = -MARGEN_PROG + "px";
+    }
+    ctxProg.setTransform(1, 0, 0, 1, 0, 0);
+    ctxProg.globalCompositeOperation = "source-over"; ctxProg.globalAlpha = 1;
+    ctxProg.clearRect(0, 0, w, h);
+    ctxProg.setTransform(dpr, 0, 0, dpr, -R.left * dpr, (MARGEN_PROG - R.top) * dpr);
+    ctxProg.globalCompositeOperation = "lighter";
+    progSucio = true;
+  }
+  function limpiarProg() {
+    if (!progSucio) return;
+    ctxProg.setTransform(1, 0, 0, 1, 0, 0);
+    ctxProg.clearRect(0, 0, lienzoProg.width, lienzoProg.height);
+    progSucio = false;
   }
 
   // ----------------------------------------------------------- lectura
@@ -1173,10 +1253,14 @@
     })(nb);
   }
   function colocarPeldanos(rb, x0, largoX) {
-    var clave = [rb.left, rb.top, rb.width, rb.height].map(Math.round).join(",");
+    // La capa vive dentro del índice (ver prepararProg): se coloca respecto a
+    // él, no a la ventana
+    var nr = est.navProg || { left: 0, top: 0 };
+    var izq = rb.left - nr.left, arr = rb.top - nr.top;
+    var clave = [izq, arr, rb.width, rb.height].map(Math.round).join(",");
     if (clave === capaRect) return;
     capaRect = clave;
-    capa.style.left = rb.left + "px"; capa.style.top = rb.top + "px";
+    capa.style.left = izq + "px"; capa.style.top = arr + "px";
     capa.style.width = rb.width + "px"; capa.style.height = rb.height + "px";
     var paso = medioPaso() * 2 * largoX;
     for (var k = 0; k < N_PESTANAS; k++) {
@@ -1252,6 +1336,9 @@
   }
 
   function pintar(ahora) {
+    // La barra de desplazamiento aparece o desaparece sin evento resize
+    // (al cambiar a una pestaña más corta o más larga): se vuelve a medir
+    if (document.documentElement.clientWidth !== W) medir();
     var dt = Math.min(0.05, (ahora - antes) / 1000 || 0.016);
     antes = ahora;
     // Reloj virtual: tras una congelación sigue donde iba (ver la cabecera)
@@ -1354,14 +1441,17 @@
         } else { p.ox = p.sx; p.oy = p.sy; }
         // Escalonado corto (hasta 0,15 s): uno largo hace que las últimas
         // partículas lleguen tarde y el viaje parezca más lento
-        p.ret = pd.rigido ? 0 : azar() * (pd.desdePortada ? 0.45 : 0.15);
+        // Escalonado de hasta 0,35 s: las partículas salen en goteo (v28)
+        p.ret = pd.rigido ? 0 : azar() * (pd.desdePortada ? 0.45 : 0.35);
       }
       est.fig = pd.fig; est.rigido = pd.rigido;
       // Cambiar de pestaña es lo más frecuente del tablero, y lo que se ve
       // muchas veces tiene que ser corto: 0,75 s entre figuras (antes 1,7) y
       // 0,6 s si la figura es la misma. La salida de la portada, que se ve
       // una vez, conserva sus 2 s.
-      est.dur = reducir ? 0 : (pd.desdePortada ? 2.0 : (pd.rigido ? 0.6 : 0.75));
+      // Viaje largo y tranquilo, el de la versión del 27-oct que prefiere el
+      // autor (v28): 1,7 s entre figuras distintas y 1 s si solo se desliza.
+      est.dur = reducir ? 0 : (pd.desdePortada ? 2.0 : (pd.rigido ? 1.0 : 1.7));
       est.t0 = t; est.pendiente = null;
       if (est.progPendiente && enSeccion) {
         progreso.forEach(function (pq, j) {
@@ -1377,15 +1467,21 @@
     // ---- dibujo de la figura
     if (caja) {
       var viajando = t < est.t0 + est.dur + 0.6 || !lista;
+      var enCab = enSeccion && lista && !viajando && !!cab && clave !== "intro";
+      if (enCab) { prepararCab(cab); ctx = ctxCab; } else limpiarCab();
       ctx.save();
-      if (!viajando) {
-        // Ya colocada, no pisa el índice fijo (ni de Introducción ni de sección)
-        var navR = nav ? nav.getBoundingClientRect() : null;
-        var arriba = caja.R.top, abajo = caja.R.bottom;
-        if (navR) {
-          if (clave === "intro") abajo = Math.min(abajo, navR.top);
-          else arriba = Math.max(arriba, navR.bottom);
-        }
+      // Parte visible de la franja: la que no tapa el índice fijo (ni de
+      // Introducción ni de sección). Se mide siempre porque los rótulos la
+      // necesitan también durante el viaje.
+      var navR = nav ? nav.getBoundingClientRect() : null;
+      var arriba = caja.R.top, abajo = caja.R.bottom;
+      if (navR) {
+        if (clave === "intro") abajo = Math.min(abajo, navR.top);
+        else arriba = Math.max(arriba, navR.bottom);
+      }
+      if (!viajando && !enCab) {
+        // Ya colocada, no pisa el índice fijo (en el lienzo de la cabecera no
+        // hace falta: el índice, opaco, ya queda por encima)
         ctx.beginPath(); ctx.rect(0, arriba, W, Math.max(0, abajo - arriba)); ctx.clip();
       }
       // Con la cabecera fuera de la vista (al leer una pestaña, bajo el
@@ -1396,7 +1492,9 @@
       // Recogida: en cuanto cambia la pestaña, la figura vieja se encoge un
       // 18 % hacia su centro y se apaga un poco, en 0,3 s. Así el clic tiene
       // respuesta aunque el viaje espere a que la pestaña nueva esté lista.
-      var recoge = !lista && est.pendiente && !est.pendiente.rigido && !reducir ? suave(0, 0.3, t - est.tCambio) : 0;
+      // (v28) Desactivada: con el viaje largo el autor prefiere que la figura
+      // vieja siga entera hasta que sale. Para volver a usarla, cambia el 0.
+      var recoge = 0 && !lista && est.pendiente && !est.pendiente.rigido && !reducir ? suave(0, 0.3, t - est.tCambio) : 0;
       var rcx = caja.x + caja.w / 2, rcy = caja.y + caja.h / 2;
       var fn = FUNCIONES[est.fig], llegada = 0;
       // Reloj de la figura: sus ciclos empiezan cuando llega
@@ -1420,12 +1518,12 @@
           if (kk2 < 1) {
             if (kk2 <= 0) { x = pa.ox; y = pa.oy; m = 0.6; }
             else {
-              var ee = curvaViaje(kk2);
+              // Curva coseno suave (ease-in-out leve), la del 27-oct (v28)
+              var ee = 0.5 - 0.5 * Math.cos(Math.PI * kk2);
               if (est.rigido) { x = pa.ox + (pa.tx - pa.ox) * ee; y = pa.oy + (pa.ty - pa.oy) * ee; }
               else {
-                // Arcos más cerrados que con el viaje largo: a esta velocidad,
-                // los abiertos se leían como un estallido
-                var cx = (pa.ox + pa.tx) / 2 + pa.g2 * 46 * (1 - ee), cy = (pa.oy + pa.ty) / 2 - pa.g1 * 32 * (1 - ee);
+                // Arcos amplios, los del viaje largo (v28)
+                var cx = (pa.ox + pa.tx) / 2 + pa.g2 * 70 * (1 - ee), cy = (pa.oy + pa.ty) / 2 - pa.g1 * 50 * (1 - ee);
                 var u1 = (1 - ee) * (1 - ee), u2 = 2 * (1 - ee) * ee, u3 = ee * ee;
                 x = u1 * pa.ox + u2 * cx + u3 * pa.tx; y = u1 * pa.oy + u2 * cy + u3 * pa.ty;
               }
@@ -1451,7 +1549,17 @@
                    alfa * rr[3], pa.tri, st.halo);
       }
       ctx.restore();
-      if (llegada > N * 0.9 && lista) rotulos(est.fig, caja, Math.min(1, (t - est.t0 - est.dur) * 2));
+      // Los rótulos, con el mismo recorte que las partículas. Antes iban fuera
+      // de él: al bajar rápido quedaban sobre el índice fijo o el contenido
+      // blanco, y como el lienzo deja de repintarse con la cabecera oculta
+      // (est.quieto), ese último fotograma se quedaba en pantalla.
+      if (llegada > N * 0.9 && lista && abajo - arriba > 0) {
+        ctx.save();
+        if (!enCab) { ctx.beginPath(); ctx.rect(0, arriba, W, abajo - arriba); ctx.clip(); }
+        rotulos(est.fig, caja, Math.min(1, (t - est.t0 - est.dur) * 2));
+        ctx.restore();
+      }
+      ctx = ctxFijo;
       // Hueco limpio alrededor de los botones. Mientras espera, la figura
       // vieja sigue en la franja de arriba, que en las secciones es también
       // la fila del índice: sin esto tapaba «anterior / siguiente».
@@ -1477,12 +1585,19 @@
       var bp = document.querySelector(".navbar-tabs.en-seccion .indice-progreso");
       var rbp = bp ? bp.getBoundingClientRect() : null;
       est.progAncho = rbp ? rbp.width : 0;   // 0 en el móvil, donde la barra no se muestra
-      if (rbp && rbp.width > 30) { est.rectProg = rbp; est.posProg = pos; dibujarProgreso(rbp, t, dt, pos); }
+      if (rbp && rbp.width > 30) {
+        est.rectProg = rbp; est.posProg = pos;
+        // Ya llegada (el vuelo dura 1,2 s más el escalonado): en el índice
+        if (t - est.t0Prog > 1.6) { prepararProg(nav); ctx = ctxProg; } else limpiarProg();
+        dibujarProgreso(rbp, t, dt, pos);
+        ctx = ctxFijo;
+      }
       else { est.progAsentada = true; est.posPintada = pos; est.hoverPintado = est.hoverPeldano; }
     } else if (est.progSaliendo && est.rectProg && est.visProg > 0.01) {
       est.visProg = Math.max(0, est.visProg - dt * 3);
+      limpiarProg();
       dibujarProgreso(est.rectProg, t, dt, est.posProg || 1);
-    } else { est.visProg = 0; est.progSaliendo = false; }
+    } else { est.visProg = 0; est.progSaliendo = false; limpiarProg(); }
     var conPeldanos = enSeccion && !est.progPendiente && est.visProg > 0.5 && est.progAncho > 30;
     if (capa.hidden === !!conPeldanos) capa.hidden = !conPeldanos;
     est.huellaPrevia = huellaEste;

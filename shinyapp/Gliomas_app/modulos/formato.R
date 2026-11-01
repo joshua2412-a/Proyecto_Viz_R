@@ -19,7 +19,7 @@ num <- function(valor, decimales = 1, signo = FALSE) {
 
 miles <- function(valor) {
   if (es_nulo(valor)) return("—")
-  formatC(round(as.numeric(valor)), format = "d", big.mark = ".")
+  formatC(round(as.numeric(valor)), format = "d", big.mark = ".", decimal.mark = ",")
 }
 
 pct <- function(valor, decimales = 1, signo = FALSE) {

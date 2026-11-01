@@ -245,9 +245,14 @@ texto_calibracion <- function() {
     "Una AUC alta solo garantiza que el modelo ordena bien. El peor calibrado fuera de pliegue es ",
     NOMBRES_MODELO[[peor]], " (ECE ", num(RESUMEN$modelos[[peor]]$ece_oof, 3), "), que en los ",
     "tramos intermedios se aparta de la frecuencia observada.",
-    if (!is.na(antes) && !is.na(despues)) {
+    if (!is.na(antes) && !is.na(despues) && despues < antes) {
       paste0(" Recalibrado con ", tolower(metodo), ", su error de calibración en prueba pasa de ",
              num(antes, 3), " a ", num(despues, 3), " sin cambiar casi la AUC.")
+    } else if (!is.na(antes) && !is.na(despues)) {
+      # Con los modelos del libro de R, ninguna recalibración mejora Random Forest
+      paste0(" Ninguna de las dos recalibraciones lo mejora en prueba: su error de calibración ",
+             "es ", num(antes, 3), " sin recalibrar, ", num(ece(nombre_libro, "Platt"), 3),
+             " con Platt y ", num(ece(nombre_libro, "Isotónica"), 3), " con la isotónica.")
     } else ""
   )
 }
@@ -330,7 +335,18 @@ lectura_importancia <- function() {
            if (length(anuladas)) paste0(" La regularización L1 de la logística deja en cero ",
                                         length(anuladas), " variables (", lista_y(anuladas), ").") else ""),
     paste("EGFR cambia de signo: asociada a GBM por sí sola, empuja levemente hacia LGG una vez",
-          "descontadas la edad y la ausencia de IDH1.")
+          "descontadas la edad y la ausencia de IDH1."),
+    # NF1 no tiene asociación marginal en el EDA, pero gana peso en los modelos
+    {
+      a <- asociacion_con_grado("train")
+      puesto <- match("NF1", vapply(imp, `[[`, character(1), "variable"))
+      if (!is.na(puesto) && puesto <= 6 && !a$significativa[a$variable == "NF1"]) {
+        paste0("NF1 no mostraba asociación con el grado por sí sola, pero es la ",
+               c("primera", "segunda", "tercera", "cuarta", "quinta", "sexta")[puesto],
+               " variable en XGBoost", if ("NF1" %in% VARIABLES_PANEL) " y entra en el panel reducido" else "",
+               ": su efecto aparece en combinación con las demás.")
+      }
+    }
   )
 }
 
@@ -363,7 +379,8 @@ panel_interpretacion <- function() {
         card(
           paragraph(paste0(
             "Es la respuesta al objetivo general del proyecto. Con ", panel_en_palabras(),
-            " el modelo conserva prácticamente toda la capacidad del panel de 20 genes.")),
+            " el modelo conserva casi toda la capacidad del panel de 20 genes: según la regla ",
+            "de un error estándar, es el panel más pequeño que no se distingue del completo.")),
           stat_list(c(
             lapply(sort(unique(c(1, 2, K_PANEL))), function(k) {
               c(if (k == 1) paste("Solo", nombres_panel()[1]) else paste(nombres_panel()[seq_len(k)], collapse = " + "),
@@ -374,8 +391,9 @@ panel_interpretacion <- function() {
           callout(
             paste("El ranking se recalcula en cada uno de los 10 pliegues externos sin ver sus",
                   "datos de validación, y el panel sale de las variables que más veces lo",
-                  "encabezan. La mutación IDH1 R132H puede detectarse además por",
-                  "inmunohistoquímica, sin secuenciar."),
+                  "encabezan. Además, la variante más común de IDH1, R132H (cerca del 90 % de",
+                  "los gliomas con IDH mutado), puede detectarse por inmunohistoquímica, sin",
+                  "secuenciar."),
             titulo = "Un panel estable"
           ),
           titulo = "Panel reducido", tono = "acento"
@@ -455,7 +473,7 @@ panel_comparacion <- function() {
     ),
     section_title("Comparación dirigida entre los modelos finales"),
     card(data_table(c("Comparación", "Δ AUC (prueba)", "IC 95 % bootstrap", "p DeLong",
-                      "p ajustado (Holm)", "δ de Cliff"), filas_delong),
+                      "p ajustado (Holm)", "Tamaño del efecto (Cliff)"), filas_delong),
          subtitulo = "Con 3 comparaciones, los p-valores se ajustan por Holm-Bonferroni.", class = "mb-4"),
     section_title("Análisis por factor"),
     card(data_table(c("Factor", "Bloques", "Friedman", "p", "Rango promedio (1 = mejor)"), filas_factor),
@@ -474,8 +492,7 @@ panel_comparacion <- function() {
                          paste("Cuánto le falta a cada método, tras t evaluaciones, para la mejor AUC",
                                "interna que encontró cualquiera de los cuatro. Más abajo es mejor;",
                                "media de 40 búsquedas."))),
-      columna(lg = 5, class = "mb-4", lectura_guiada(lectura_optimizadores()
-      )))
+      columna(lg = 5, class = "mb-4", lectura_guiada(lectura_optimizadores()))
     ),
     card(data_table(c("Optimizador", "AUC interna t = 6", "t = 24", "Bloques al mejor",
                       "Evaluaciones al mejor", "AUC externa", "Optimismo"), filas_opt),
@@ -507,8 +524,8 @@ ui_modelos <- function() {
         )),
     div(class = "mt-4",
         callout(
-          tagList("El desarrollo completo —espacios de búsqueda, complejidad computacional, LIME,",
-                  " sensibilidad a la semilla y todas las pruebas— está en el ",
+          tagList("El desarrollo completo, con los espacios de búsqueda, la complejidad",
+                  " computacional, LIME, la sensibilidad a la semilla y todas las pruebas, está en el ",
                   tags$a("capítulo de modelado del libro", href = URL_LIBRO_MODELADO, target = "_blank",
                          rel = "noopener noreferrer", class = "link-externo"), "."),
           titulo = "Dónde seguir"

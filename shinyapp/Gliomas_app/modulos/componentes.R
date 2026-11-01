@@ -214,9 +214,21 @@ grafico <- function(id) {
   div(class = "graph", plotly::plotlyOutput(id, height = "auto"))
 }
 
+# Chip «Pregúntale a Glía» junto al título de un gráfico. El título y la nota
+# viajan en el propio botón (www/asistente.js los manda al servidor).
+chip_glia <- function(titulo, nota = "") {
+  tags$button(
+    type = "button", class = "glia-chip", title = paste0("Pregúntale a Glía por «", titulo, "»"),
+    `data-glia-titulo` = titulo, `data-glia-nota` = if (is.character(nota)) paste(nota, collapse = " ") else "",
+    # La célula la pinta www/glia.js en el lienzo
+    tags$canvas(class = "glia-avatar", width = 22, height = 22, `aria-hidden` = "true"),
+    span(class = "glia-chip-texto", "Pregúntale a Glía")
+  )
+}
+
 graph_card <- function(id, titulo, nota = "") {
   card(
-    tags$h5(class = "card-title-custom", titulo),
+    div(class = "card-titulo-fila", tags$h5(class = "card-title-custom", titulo), chip_glia(titulo, nota)),
     grafico(id),
     if (nzchar(nota)) div(class = "graph-note", style = paste0("color: ", INK_MUTED, ";"), nota)
   )

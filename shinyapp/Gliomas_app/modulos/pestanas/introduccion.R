@@ -123,10 +123,10 @@ ui_introduccion <- function() {
             titulo = "El cuello de botella"
           ),
           paragraph(paste(
-            "Este tablero aborda el desafío en dos pasos: primero identifica qué",
+            "Este tablero recorre el desafío completo: primero identifica qué",
             "variables clínicas y qué mutaciones separan realmente a los dos grupos, y",
-            "con qué fuerza; después convierte esos hallazgos en tres modelos de",
-            "clasificación y mide cómo rinden con pacientes que no vieron al entrenar.")),
+            "con qué fuerza; después entrena tres modelos para medir cuánta precisión",
+            "se conserva con solo las que más aportan.")),
           titulo = "El problema en una página"
         )
       ),

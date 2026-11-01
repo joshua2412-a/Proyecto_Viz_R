@@ -146,3 +146,13 @@ GENE_DESCRIPCION <- c(
   FAT4 = "Organización, adhesión y crecimiento celular.",
   PDGFRA = "Receptor de señales de crecimiento y proliferación."
 )
+
+# Nombre corto en español de las variables clínicas, para tablas, ejes y
+# lecturas donde no cabe la etiqueta larga (como nombre_corto() en Dash). Los
+# genes se quedan con su símbolo; las columnas del CSV siguen en inglés.
+NOMBRE_CORTO <- c(Grade = "Grado", Age_at_diagnosis = "Edad", Gender = "Género",
+                  Race = "Grupo racial", "Race (binaria)" = "Grupo racial",
+                  Race_binary = "Grupo racial")
+nombre_corto <- function(variable) {
+  ifelse(variable %in% names(NOMBRE_CORTO), NOMBRE_CORTO[variable], variable)
+}

@@ -56,7 +56,10 @@ bslib::page(
     tags$script(src = "banda.js", defer = NA),
     tags$script(src = "enjambre.js", defer = NA),
     tags$script(src = "prediccion.js", defer = NA),
-    tags$script(src = "formulas.js", defer = NA)
+    tags$script(src = "formulas.js", defer = NA),
+    # Glía, la asistente (el dibujo y la conversación)
+    tags$script(src = "glia.js", defer = NA),
+    tags$script(src = "asistente.js", defer = NA)
   ),
   withMathJax(),
   div(
@@ -68,6 +71,7 @@ bslib::page(
     div(class = "container-fluid page-container",
         div(id = "contenido-pestana", uiOutput("contenido"))),
     pie_pagina(),
+    glia_ui(),
     datos_navegacion_js()
   )
 )

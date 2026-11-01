@@ -156,15 +156,7 @@ ui_exploracion <- function() {
     ),
     exploracion_controles(),
     div(class = "mb-3", series_chips()),
-    uiOutput("exp_panel"),
-    section_title("Dónde seguir"),
-    callout(
-      paste("Este módulo responde de una en una. El recorrido completo, con las variables",
-            "comparadas entre sí y la matriz de multicolinealidad, está en Resultados; la",
-            "tabla de operacionalización de las 23 predictoras y el detalle de cada prueba,",
-            "en Marco teórico."),
-      titulo = "Cómo se relaciona con el resto del tablero"
-    )
+    uiOutput("exp_panel")
   )
 }
 

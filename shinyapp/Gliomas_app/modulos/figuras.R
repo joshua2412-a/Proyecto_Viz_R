@@ -342,7 +342,7 @@ fig_bivariada <- function(variable, ambito = "train") {
 
 fig_matriz_spearman <- function(ambito = "train") {
   m <- matriz_spearman(ambito)
-  etiquetas <- colnames(m)
+  etiquetas <- nombre_corto(colnames(m))
   valores <- m
   valores[upper.tri(valores)] <- NA
   p <- plotly::plot_ly(

@@ -5,14 +5,15 @@
 # =========================================================================== #
 
 FORMULA_CRAMER <- r"($$V \;=\; \sqrt{\frac{\chi^{2}}{n \,\cdot\, \min(k-1,\; r-1)}}$$)"
-FORMULA_SPEARMAN <- r"($$\rho \;=\; 1 - \frac{6 \sum d_i^{2}}{n\,(n^{2}-1)}$$)"
+FORMULA_SPEARMAN <- r"($$r \;=\; 1 - \frac{6 \sum d_i^{2}}{n\,(n^{2}-1)}$$)"
 
 ESTADISTICOS <- list(
   c("p-valor",
-    "Probabilidad de observar una diferencia así de grande si en realidad no hubiera ninguna.",
+    paste("Probabilidad de observar una diferencia al menos tan grande como la observada",
+          "si en realidad no hubiera ninguna."),
     paste("Responde a si la asociación es distinguible del azar, no a si es importante.",
           "Con 671 pacientes, diferencias minúsculas pueden salir significativas.")),
-  c("Spearman ($\\rho$)",
+  c("Spearman ($r$)",
     "Correlación entre los rangos de dos variables: va de -1 a +1.",
     paste("Aporta el signo, que es lo que permite decir si una variable empuja hacia LGG",
           "(negativo) o hacia GBM (positivo). No exige normalidad ni linealidad.")),
@@ -36,12 +37,14 @@ marco_tabla_variables <- function() {
   data_table(
     c("Variable", "Tipo", "Codificación", "Papel en el análisis"),
     list(
-      c("Grade", "Binaria", "0 = LGG · 1 = GBM", "Variable objetivo"),
-      c("Age_at_diagnosis", "Continua (años)", "Decimales incluidos: recogen los días exactos",
+      # Nombre en español y, entre paréntesis, la columna del CSV: es una tabla
+      # de operacionalización, así que se ven las dos.
+      c("Grado (Grade)", "Binaria", "0 = LGG · 1 = GBM", "Variable objetivo"),
+      c("Edad al diagnóstico (Age_at_diagnosis)", "Continua (años)", "Decimales incluidos: recogen los días exactos",
         "Predictora · se contrasta con Mann-Whitney"),
-      c("Gender", "Binaria", paste(paste(names(GENDER_LABELS), "=", GENDER_LABELS), collapse = " · "),
+      c("Género (Gender)", "Binaria", paste(paste(names(GENDER_LABELS), "=", GENDER_LABELS), collapse = " · "),
         "Predictora · chi-cuadrado, V de Cramér y Spearman"),
-      c("Race", "Categórica (4 niveles)",
+      c("Grupo racial (Race)", "Categórica (4 niveles)",
         paste(paste(names(RACE_LABELS), "=", RACE_LABELS), collapse = " · "),
         paste("Predictora · chi-cuadrado, V de Cramér y Spearman sobre la versión",
               "agrupada en dos niveles")),
@@ -56,13 +59,13 @@ marco_tabla_genes <- function() {
   a <- asociacion_con_grado(AMBITO_EDA)
   filas <- lapply(prev$gen, function(gen) {
     fila_a <- a[a$variable == gen, ]
-    # Tres decimales: con dos, un ρ de 0,098 se leía "+0,10", justo el umbral
+    # Tres decimales: con dos, un r de 0,098 se leía "+0,10", justo el umbral
     rho <- round(fila_a$rho, 3)
     hacia <- if (rho < 0) "LGG" else "GBM"
     marca <- if (fila_a$significativa) "" else if (fila_a$p_valor >= ALFA) {
       " (no significativa)"
     } else {
-      paste0(" (débil: $|\\rho| < ", tnum(EFECTO_MINIMO, 2), "$)")
+      paste0(" (débil: $|r| < ", tnum(EFECTO_MINIMO, 2), "$)")
     }
     c(gen, unname(GENE_DESCRIPCION[gen]), pct(prev$prevalencia[prev$gen == gen], 1),
       paste0(num(rho, 3, signo = TRUE), " → ", hacia, marca))
@@ -82,10 +85,10 @@ ui_marco <- function() {
     section_title("Operacionalización de las variables"),
     card(
       paragraph(paste(
-        "El dataset llega ya codificado numéricamente. Conocer esa codificación es",
-        "imprescindible para leer los coeficientes: un coeficiente positivo en Gender no",
-        "significa 'ser hombre aumenta el riesgo', sino que la categoría codificada como 1",
-        "(femenino) lo hace respecto a la de referencia.")),
+        "El dataset llega ya codificado numéricamente, y esa codificación es la que da",
+        "sentido a los signos: como el género vale 0 en los hombres y 1 en las mujeres,",
+        "una correlación o un coeficiente positivo en género indicaría más riesgo de GBM",
+        "en las mujeres que en los hombres, que son la categoría de referencia.")),
       marco_tabla_variables(),
       titulo = "Las 23 predictoras y la variable objetivo"
     ),
@@ -95,7 +98,7 @@ ui_marco <- function() {
         lg = 6, class = "mb-4",
         card(
           paragraph(paste(
-            "Decir que una mutación «está relacionada» con el grado del tumor no significa",
+            "Decir que una mutación está relacionada con el grado del tumor no significa",
             "nada hasta que se cuantifica. Dos preguntas distintas, dos números distintos:",
             "¿es distinguible del azar?, y ¿de qué tamaño es el efecto?")),
           paragraph(paste(
@@ -122,13 +125,19 @@ ui_marco <- function() {
             "dirección. Se calcula sobre los rangos de los datos, no sobre sus valores, de",
             "modo que no exige normalidad ni una relación lineal.")),
           formula(FORMULA_SPEARMAN),
+          # La fórmula clásica supone que no hay empates; con variables 0/1 casi
+          # todo son empates.
+          paragraph(paste(
+            "La fórmula es la de datos sin empates. Con variables 0/1, casi todos los",
+            "valores empatan, y el coeficiente se calcula como la correlación de Pearson",
+            "entre los rangos, que es su definición general.")),
           bullet_list(list(
             "Signo negativo: la variable acompaña a los gliomas de bajo grado.",
             "Signo positivo: acompaña a los glioblastomas.",
             "Cerca de cero: no distingue entre los dos."
           )),
           paragraph(paste(
-            "Codificando el grado como 0 = LGG y 1 = GBM, el signo de $\\rho$ se lee",
+            "Codificando el grado como 0 = LGG y 1 = GBM, el signo de $r$ se lee",
             "directamente como la dirección hacia la que empuja cada marcador.")),
           titulo = "Dirección del efecto"
         )
@@ -146,7 +155,7 @@ ui_marco <- function() {
       paragraph(paste(
         "Los 20 genes del panel son los de mayor frecuencia de mutación en los proyectos",
         "TCGA-LGG y TCGA-GBM. La prevalencia y la asociación se calculan sobre el",
-        "conjunto de entrenamiento, así que cambian solas si se reemplaza el dataset.")),
+        "conjunto de entrenamiento.")),
       marco_tabla_genes(),
       div(class = "mt-3",
           enlace_externo("Ver el desarrollo completo del EDA en el libro", URL_LIBRO_EDA)),

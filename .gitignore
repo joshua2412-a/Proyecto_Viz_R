@@ -8,3 +8,6 @@ _versiones_guardadas/
 
 # Datos de despliegue de shinyapps.io (cuenta e identificador de la app)
 shinyapp/Gliomas_app/rsconnect/
+
+# Clave de Gemini para Glía en la app Shiny (nunca al repositorio)
+shinyapp/Gliomas_app/.Renviron

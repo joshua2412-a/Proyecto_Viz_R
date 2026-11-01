@@ -85,11 +85,15 @@ barra_superior <- function() {
         columna(
           md = 8,
           div(class = "brand-eyebrow", "Dashboard analítico · TCGA-LGG y TCGA-GBM"),
-          tags$h1(class = "brand-title", "Grado tumoral en gliomas"),
+          # El título recarga la página y vuelve a la portada (como en Dash):
+          # reabrirla en caliente obligaría a reiniciar intro.js, banda.js y Glía.
+          tags$h1(class = "brand-title",
+                  tags$a("Grado tumoral en gliomas", href = "./", class = "brand-title-enlace",
+                         title = "Volver a la portada")),
           div(class = "brand-subtitle",
-              paste("Análisis exploratorio y modelado de la edad, el perfil",
-                    "demográfico y 20 mutaciones genéticas en 839 pacientes de",
-                    "TCGA-LGG y TCGA-GBM"))
+              paste("Exploración, modelado y predicción del grado tumoral a partir de",
+                    "la edad, el perfil demográfico y 20 mutaciones en 839 pacientes",
+                    "de TCGA-LGG y TCGA-GBM"))
         ),
         columna(
           md = 4, class = "d-flex align-items-end justify-content-md-end",

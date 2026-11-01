@@ -547,6 +547,9 @@ server_prediccion <- function(input, output, session) {
   })
 
   modelo <- reactive(if (is.null(input$pred_modelo)) "logistica" else input$pred_modelo)
+  # Para Glía, que interpreta la predicción desde cualquier pestaña
+  session$userData$glia_prediccion <- reactive(list(paciente = predicho(), modelo = modelo(),
+                                                    cargado = cargado()))
   probas <- reactive(predecir(predicho()))
   explicacion <- reactive(explicar(predicho(), modelo()))
 

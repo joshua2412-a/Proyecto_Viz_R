@@ -43,8 +43,8 @@ ui_documentacion <- function() {
     class = "vista-pestana",
     page_header(
       "Documentación del proyecto",
-      paste("La app permite explorar el análisis y probar los modelos; el libro lo demuestra paso",
-            "a paso, con el desarrollo de cada prueba."),
+      paste("La app resume el análisis exploratorio y el modelado; el libro los desarrolla paso",
+            "a paso, con cada prueba y el código que la produce."),
       "book"
     ),
     fila(
@@ -77,7 +77,8 @@ ui_documentacion <- function() {
           callout(
             paste("La partición 80/20 es la misma en el libro, en el modelado y en la app",
                   "(train_data.csv y test_data.csv), y los modelos de la app son los que entrena",
-                  "el capítulo de modelado del libro, así que las cifras coinciden en las tres piezas."),
+                  "el capítulo de modelado del libro, así que las tres piezas parten de los mismos",
+                  "datos y los mismos modelos."),
             titulo = "Una sola fuente de verdad"
           ),
           titulo = "Arquitectura del proyecto"
@@ -88,7 +89,7 @@ ui_documentacion <- function() {
         card(
           paragraph("Para ejecutar la app en local, desde la carpeta del repositorio:"),
           tags$pre(class = "code-block", paste(
-            'install.packages(c("shiny", "bslib", "plotly", "jsonlite"))',
+            'install.packages(c("shiny", "bslib", "plotly", "jsonlite", "httr2"))',
             'shiny::runApp("shinyapp/Gliomas_app")', sep = "\n")),
           paragraph("Para compilar el libro (sale en docs/, listo para GitHub Pages):"),
           tags$pre(class = "code-block", paste(

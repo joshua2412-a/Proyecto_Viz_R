@@ -7,6 +7,12 @@
 limitaciones_lista <- function() {
   mejor <- mejor_modelo_test()
   ic <- RESUMEN$modelos[[mejor$clave]]$auc_test_ic
+  # El panel más pequeño que más se acerca al umbral de la regla de un error
+  # estándar sin alcanzarlo (con los resultados del libro de R, el de tres)
+  k <- vec(RESUMEN$panel$k); auc <- vec(RESUMEN$panel$auc); de <- vec(RESUMEN$panel$de)
+  umbral <- auc[k == max(k)] - de[k == max(k)] / sqrt(RESUMEN$meta$k_externo)
+  menores <- which(k < K_PANEL)
+  cerca <- menores[which.max(auc[menores])]
   list(
     c("Cohorte única y no local",
       paste("Todos los pacientes provienen de los proyectos TCGA-LGG y TCGA-GBM, recogidos",
@@ -24,7 +30,8 @@ limitaciones_lista <- function() {
             "acompañe a los gliomas de bajo grado no establece un mecanismo causal: la",
             "explicación biológica está fuera del alcance de estos contrastes.")),
     c("El análisis describe el grado, no el pronóstico",
-      paste("La variable objetivo es la clasificación histológica LGG/GBM. Nada de lo que se",
+      paste("La variable objetivo es la clasificación histológica LGG/GBM, con el criterio",
+            "anterior a la clasificación de la OMS de 2021. Nada de lo que se",
             "observa aquí habla de supervivencia, de respuesta al tratamiento ni de",
             "progresión: son preguntas distintas que requieren otros datos y otro diseño.")),
     c("Panel de genes fijo y binario",
@@ -38,10 +45,12 @@ limitaciones_lista <- function() {
              "diferencias entre los tres clasificadores no se distinguen del azar: la cifra ",
              "puntual no es la capacidad definitiva de ninguno.")),
     c("La reducción de costes es una hipótesis, no un resultado clínico",
-      paste("Que un panel de pocas variables conserve casi toda la capacidad discriminativa",
-            "sugiere que bastaría para clasificar el grado. Validar eso exige un estudio",
-            "prospectivo con el panel reducido, no solo modelos entrenados sobre datos",
-            "históricos.")),
+      paste0("Que un panel reducido (", numero_texto(K_PANEL), " variables) rinda casi como ",
+             "las 23 sugiere que bastaría para clasificar el grado. Validar eso exige un ",
+             "estudio prospectivo con el panel reducido, no solo modelos entrenados sobre ",
+             "datos históricos. Además, el tamaño del panel depende del criterio: con ",
+             numero_texto(k[cerca]), " variables la AUC queda a ",
+             num(umbral - auc[cerca], 4), " del umbral de la regla de un error estándar.")),
     c("Contrastes múltiples: corregidos, pero un cribado sigue siendo un cribado",
       paste("Se contrastan 23 variables contra el grado por separado, así que algún p-valor",
             "pequeño podría salir por azar. La tabla de Resultados reporta el q-valor de",
@@ -97,12 +106,6 @@ ui_limitaciones <- function() {
         "trabajo.")),
       limitaciones_tabla_representatividad(),
       titulo = "Composición de la cohorte por grupo racial"
-    ),
-    callout(
-      paste("Un tablero que estima probabilidades sobre personas tiene que decir con la",
-            "misma claridad qué no sabe. Esa es la función de esta pestaña: no es un trámite",
-            "académico, es parte del resultado."),
-      titulo = "Por qué esta pestaña existe"
     )
   )
 }

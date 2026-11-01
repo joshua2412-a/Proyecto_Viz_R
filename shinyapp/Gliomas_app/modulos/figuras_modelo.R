@@ -297,8 +297,12 @@ fig_panel_reducido <- function() {
   }
   p <- plotly::layout(
     p,
+    # Línea de las 23 variables y, como en el libro, el panel mínimo de la regla
+    # de un error estándar
     shapes = list(list(type = "line", xref = "paper", x0 = 0, x1 = 1, y0 = completo, y1 = completo,
-                       line = list(color = INK_MUTED, dash = "dash", width = 1))),
+                       line = list(color = INK_MUTED, dash = "dash", width = 1)),
+                  list(type = "line", yref = "paper", x0 = K_PANEL, x1 = K_PANEL, y0 = 0, y1 = 1,
+                       line = list(color = INK_MUTED, dash = "dot", width = 1))),
     annotations = notas,
     xaxis = eje_x(title = list(text = "Número de variables (las k más importantes)"), tickvals = k),
     yaxis = eje_y(title = list(text = "AUC (media ± DE, 10 pliegues)"), tickformat = ".2f",

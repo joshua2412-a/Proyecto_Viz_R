@@ -24,4 +24,14 @@ function(input, output, session) {
   server_resultados(input, output, session)
   server_modelos(input, output, session)
   server_prediccion(input, output, session)
+
+  # Glía lee la pestaña activa y, si ya se visitó Predicción, el perfil que hay
+  # allí (lo deja server_prediccion en session$userData$glia_prediccion)
+  visto_prediccion <- reactiveVal(FALSE)
+  observe(if (identical(pestana(), "tab-prediccion")) visto_prediccion(TRUE))
+  estado_pred <- reactive({
+    if (!visto_prediccion() || is.null(session$userData$glia_prediccion)) return(NULL)
+    session$userData$glia_prediccion()
+  })
+  server_asistente(input, output, session, pestana, estado_pred)
 }

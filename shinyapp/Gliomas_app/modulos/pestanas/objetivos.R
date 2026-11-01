@@ -17,18 +17,22 @@ OBJETIVOS_ESPECIFICOS <- list(
     paste("Contrastar cada predictora contra el grado tumoral con la prueba adecuada a",
           "su naturaleza (Mann-Whitney para la edad, chi-cuadrado y V de Cramér para las",
           "binarias y categóricas) y ordenar las variables por capacidad discriminativa.")),
-  c("4", "Descartar redundancia entre marcadores",
-    paste("Evaluar la co-ocurrencia entre mutaciones y el factor de inflación de la",
-          "varianza para confirmar que el conjunto retenido puede entrar completo en un",
-          "modelo sin inestabilidad en la estimación de los parámetros.")),
-  c("5", "Entrenar, comparar y reducir el panel",
-    paste("Ajustar regresión logística, random forest y XGBoost con validación cruzada",
-          "anidada, evaluarlos en el conjunto de prueba y medir cuánta capacidad",
-          "discriminativa se conserva con un panel de pocas variables.")),
+  # Antes eran dos objetivos (redundancia y panel). Se unieron para dejar sitio
+  # al de modelado sin romper la cuadrícula de 3 + 3 tarjetas (como en Dash).
+  c("4", "Delimitar un panel reducido y sin redundancia",
+    paste("Separar las variables que aportan señal sobre el grado de las que no y",
+          "evaluar la co-ocurrencia entre mutaciones, para sostener con evidencia que",
+          "un panel más pequeño basta y que puede entrar en un modelo sin",
+          "multicolinealidad.")),
+  c("5", "Entrenar y comparar modelos de clasificación",
+    paste("Ajustar regresión logística, Random Forest y XGBoost con validación cruzada",
+          "anidada, comparar técnicas de balanceo y de optimización de",
+          "hiperparámetros, evaluar discriminación y calibración en el conjunto de",
+          "prueba y medir cuánto se pierde con solo las variables que más aportan.")),
   c("6", "Poner el análisis a disposición de otros",
-    paste("Publicar el desarrollo completo como libro en R (bookdown) y una capa",
-          "interactiva —esta aplicación de Shiny— que permita explorar el análisis y",
-          "probar los modelos sin tocar el código."))
+    paste("Publicar el desarrollo completo en un libro en R (bookdown) y acompañarlo",
+          "de una aplicación interactiva que permita explorar los datos, comparar los",
+          "modelos y obtener predicciones sin necesidad de ejecutar código."))
 )
 
 objetivos_tabla_criterios <- function() {
@@ -43,9 +47,17 @@ objetivos_tabla_criterios <- function() {
   prop_test <- proporcion_grado("test")
   gbm_train <- prop_train$porcentaje[prop_train$grado == "GBM"]
   gbm_test <- prop_test$porcentaje[prop_test$grado == "GBM"]
+  # Con las cifras ya redondeadas: restando antes de redondear salía
+  # «42,0 % y 41,7 % (0,4 puntos)», que el lector toma por una cuenta mal hecha.
+  gbm_train <- round(gbm_train, 1)
+  gbm_test <- round(gbm_test, 1)
   brecha <- abs(gbm_train - gbm_test)
   v_maxima <- max(m)
-  mejor <- mejor_modelo_test()
+  # Criterios del modelado, con las cifras que exporta el libro de R
+  auc_prueba <- vapply(ORDEN_MODELOS, function(m) RESUMEN$modelos[[m]]$auc_test, numeric(1))
+  pr <- RESUMEN$panel_reducido
+  auc_panel <- vec(RESUMEN$panel$auc)
+  auc_4 <- auc_panel[vec(RESUMEN$panel$k) == 4]
 
   filas <- list(
     c("Dataset sin valores faltantes",
@@ -64,10 +76,15 @@ objetivos_tabla_criterios <- function() {
     c("El panel se puede reducir: no todas las variables aportan",
       paste(significativas, "de", nrow(asociacion), "variables muestran señal"),
       if (significativas < nrow(asociacion)) "Cumple" else "No cumple"),
-    c("Un clasificador generaliza a pacientes nuevos (AUC de prueba $\\geq 0{,}85$)",
-      paste0("El mejor en prueba es ", NOMBRES_MODELO[[mejor$clave]], " con AUC = ",
-             num(mejor$auc, 3)),
-      if (mejor$auc >= 0.85) "Cumple" else "No cumple")
+    c("Los tres modelos discriminan bien en prueba (AUC ≥ 0,90)",
+      paste0("AUC de ", num(min(auc_prueba), 3), " a ", num(max(auc_prueba), 3), " en los ",
+             RESUMEN$meta$n_test, " pacientes de prueba"),
+      if (min(auc_prueba) >= 0.90) "Cumple" else "No cumple"),
+    c("Un panel reducido no se distingue del completo (regla de un error estándar)",
+      paste0(pr$k_min, " de 23 variables: AUC ", num(pr$auc_k, 3), " frente a ",
+             num(pr$auc_23, 3), " en validación cruzada",
+             if (length(auc_4) && pr$k_min != 4) paste0(". Con 4, ", num(auc_4, 3)) else ""),
+      if (pr$k_min < 23) "Cumple" else "No cumple")
   )
   data_table(c("Criterio", "Resultado observado", "Estado"), filas)
 }
@@ -89,14 +106,7 @@ ui_objetivos <- function() {
         "asociados a pruebas moleculares innecesarias.")),
       paragraph(paste(
         "El énfasis está en la palabra óptimo: no se busca la mayor cantidad de",
-        "información posible, sino la mínima que sostenga la decisión clínica. La",
-        "primera fase responde cuáles de las 23 variables disponibles se relacionan de",
-        "verdad con el grado del tumor, y con qué fuerza.")),
-      paragraph(paste(
-        "La segunda fase traduce esos hallazgos en tres clasificadores entrenados y",
-        "evaluados con pacientes que no vieron al ajustarse. Sus resultados están en las",
-        "pestañas Modelos y Predicción, donde además se puede describir un paciente y",
-        "ver qué predice cada modelo y por qué.")),
+        "información posible, sino la mínima que sostenga la decisión clínica.")),
       titulo = "Objetivo general",
       tono = "acento"
     ),
@@ -118,13 +128,12 @@ ui_objetivos <- function() {
     section_title("Criterios de cumplimiento"),
     card(
       paragraph(paste(
-        "Cada criterio se comprueba contra los datos y los resultados del modelado cada",
-        "vez que se abre esta pestaña, no contra una cifra escrita a mano. Si mañana se",
-        "reemplaza el dataset o se reentrenan los modelos, la tabla se recalcula y delata",
-        "cualquier supuesto que haya dejado de cumplirse.")),
+        "Cada criterio se evalúa directamente sobre los datos: las cifras de la tabla",
+        "salen del mismo cálculo que el resto de la aplicación, de modo que el estado",
+        "refleja lo que los datos muestran y no una afirmación previa.")),
       objetivos_tabla_criterios(),
       titulo = "Estado frente a los criterios definidos",
-      subtitulo = "Calculado en vivo sobre el dataset y los modelos del proyecto"
+      subtitulo = "Calculado sobre el dataset del proyecto, no escrito a mano"
     )
   )
 }

@@ -49,3 +49,9 @@ CONSTRUCTORES <- list(
   "tab-documentacion" = ui_documentacion
 )
 stopifnot(setequal(names(CONSTRUCTORES), ORDEN))
+
+# Glía, la asistente: va después de las pestañas porque usa funciones de
+# Predicción (mismo_paciente) y de los módulos
+for (modulo in c("asistente.R", "asistente_panel.R")) {
+  source(file.path("modulos", modulo), local = FALSE, encoding = "UTF-8")
+}

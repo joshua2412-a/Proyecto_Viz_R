@@ -1,6 +1,23 @@
 # Modelado predictivo del grado tumoral (LGG vs. GBM) {#modelado}
 
-```{r setup-mod, include=FALSE}
+
+El análisis exploratorio identificó un panel reducido de variables con asociación clara con el grado tumoral (`IDH1`, `Age_at_diagnosis`, `PTEN`, `ATRX`, `CIC`, `EGFR`…) y descartó problemas de multicolinealidad (VIF máximo de 3,09). Este capítulo traduce esos hallazgos en un clasificador: estima qué tan bien se puede distinguir un glioma de bajo grado (LGG) de un glioblastoma (GBM) a partir de tres variables clínicas y veinte mutaciones, y qué variables sostienen esa capacidad.
+
+Se comparan tres familias de modelos con supuestos muy distintos:
+
+- Regresión logística (`glmnet`): lineal en el log-odds, con regularización L1 o L2 e interpretable coeficiente a coeficiente; es la línea base.
+- Random Forest (`ranger`): promedio de árboles decorrelacionados (*bagging* + submuestreo de variables); captura interacciones sin especificarlas.
+- XGBoost (`xgboost`): árboles construidos de forma secuencial, cada uno corrigiendo el error del anterior (*gradient boosting*), con regularización explícita.
+
+Cada modelo se combina con cuatro estrategias de balanceo y cuatro métodos de optimización de hiperparámetros, y todas las combinaciones se evalúan con validación cruzada anidada. El conjunto de prueba que el EDA reservó (168 pacientes) solo se usa al final, una vez elegidos los modelos.
+
+<div style="padding: 10px 14px; border-left: 4px solid #1f77b4; background-color: rgba(31, 119, 180, 0.06); border-radius: 4px; margin: 12px 0;">
+Cómo se calcula este capítulo. Todo el modelado se ejecuta en R a partir de `train_data.csv` y `test_data.csv`. Las funciones están en la carpeta `R/` del libro (pipelines, optimizadores, validación anidada, pruebas estadísticas y exportación para la app Shiny) y el capítulo las llama directamente. Los cálculos costosos se guardan en `resultados/cache/` la primera vez que se compila el libro; con `RECALCULAR <- TRUE`, al inicio del capítulo, se repiten desde cero.
+</div>
+
+## Configuración y datos
+
+```{r setup-mod, class.source = "fold-hide", message = FALSE, warning = FALSE}
 library(tidyverse)
 library(knitr)
 library(kableExtra)
@@ -69,22 +86,6 @@ X_train <- datos$X_train; y_train <- datos$y_train
 X_test  <- datos$X_test;  y_test  <- datos$y_test
 ```
 
-El análisis exploratorio identificó un panel reducido de variables con asociación clara con el grado tumoral (`IDH1`, `Age_at_diagnosis`, `PTEN`, `ATRX`, `CIC`, `EGFR`…) y descartó problemas de multicolinealidad (VIF máximo de 3,09). Este capítulo traduce esos hallazgos en un clasificador: estima qué tan bien se puede distinguir un glioma de bajo grado (LGG) de un glioblastoma (GBM) a partir de tres variables clínicas y veinte mutaciones, y qué variables sostienen esa capacidad.
-
-Se comparan tres familias de modelos con supuestos muy distintos:
-
-- Regresión logística (`glmnet`): lineal en el log-odds, con regularización L1 o L2 e interpretable coeficiente a coeficiente; es la línea base.
-- Random Forest (`ranger`): promedio de árboles decorrelacionados (*bagging* + submuestreo de variables); captura interacciones sin especificarlas.
-- XGBoost (`xgboost`): árboles construidos de forma secuencial, cada uno corrigiendo el error del anterior (*gradient boosting*), con regularización explícita.
-
-Cada modelo se combina con cuatro estrategias de balanceo y cuatro métodos de optimización de hiperparámetros, y todas las combinaciones se evalúan con validación cruzada anidada. El conjunto de prueba que el EDA reservó (168 pacientes) solo se usa al final, una vez elegidos los modelos.
-
-<div style="padding: 10px 14px; border-left: 4px solid #1f77b4; background-color: rgba(31, 119, 180, 0.06); border-radius: 4px; margin: 12px 0;">
-Cómo se calcula este capítulo. Todo el modelado se ejecuta en R a partir de `train_data.csv` y `test_data.csv`. Las funciones están en la carpeta `R/` del libro (pipelines, optimizadores, validación anidada, pruebas estadísticas y exportación para la app Shiny) y el capítulo las llama directamente. Los cálculos costosos se guardan en `resultados/cache/` la primera vez que se compila el libro; con `RECALCULAR <- TRUE`, al inicio del capítulo, se repiten desde cero.
-</div>
-
-## Configuración y datos
-
 ### Entorno y semilla
 
 La reproducibilidad depende de dos cosas: una semilla única y las versiones exactas de los paquetes. La semilla global (`SEED = 42`, la misma del EDA) se pasa explícitamente a los pliegues de `rsample`, a los modelos, al sobremuestreo de `themis` y a los dos optimizadores con azar (`ParBayesianOptimization` y `GA`). Las versiones de la ejecución que produjo los resultados se registran junto a ellos.
@@ -139,7 +140,7 @@ El proyecto no consiste en entrenar un modelo, sino en recorrer de forma sistem�
 | 3. Optimización de hiperparámetros | Grid Search, Random Search, Bayesiana (`ParBayesianOptimization`), Genética (`GA`) | 4 |
 | **Total** | $3 \times 4 \times 4$ | **48** |
 
-```{r experimento-mod, include = FALSE}
+```{r experimento-mod, class.source = "fold-hide", results = "hide", message = FALSE, warning = FALSE}
 completo <- all(file.exists(pmap_chr(combinaciones(), archivo_parcial)))
 exp_res <- if (RECALCULAR || !completo) {
   correr_experimento(X_train, y_train, procesos = PROCESOS)

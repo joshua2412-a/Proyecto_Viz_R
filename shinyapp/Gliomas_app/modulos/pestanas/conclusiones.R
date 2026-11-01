@@ -30,7 +30,7 @@ conclusiones_kpis <- function() {
   mejor <- mejor_modelo_test()
   list(
     list(valor = num(a$rho[a$variable == "IDH1"], 2, signo = TRUE), etiqueta = "Spearman de IDH1",
-         detalle = "El marcador más discriminante, y de signo protector", color = COLOR_LGG),
+         detalle = "El marcador más discriminante, asociado al bajo grado", color = COLOR_LGG),
     list(valor = paste(sum(a$significativa), "de", nrow(a)), etiqueta = "Variables con señal",
          detalle = paste("Sobre", tamanos_particion()[["train"]], "pacientes de entrenamiento")),
     list(valor = num(mejor$auc, 3), etiqueta = "AUC en prueba",
@@ -65,7 +65,7 @@ conclusiones_tabla_hallazgos <- function() {
         "Sostiene la hipótesis central: un panel reducido podría bastar para decidir el grado."),
       c("No hay multicolinealidad estructural",
         paste0("Ningún par con V de Cramér > 0,70, y el factor de inflación de la varianza más ",
-               "alto es ", num(vif$vif[1], 2), " (", vif$variable[1], "), lejos del umbral de 5"),
+               "alto es ", num(vif$vif[1], 2), " (", nombre_corto(vif$variable[1]), "), lejos del umbral de 5"),
         paste("Los marcadores pueden entrar juntos en un modelo sin inestabilizar sus coeficientes.")),
       c("El grupo racial no es interpretable aquí",
         "Más del 90 % de la cohorte pertenece a una sola categoría",
@@ -122,7 +122,7 @@ ui_conclusiones <- function() {
       paragraph(paste0(
         "De las ", nrow(a), " variables disponibles, solo ", sum(a$significativa), " muestran una ",
         "asociación con el grado que sea a la vez estadísticamente significativa y de magnitud ",
-        "apreciable. El resto aporta una varianza explicativa insignificante: no distingue a un ",
+        "apreciable. El resto, por sí solo, aporta una varianza explicativa insignificante: no distingue a un ",
         "glioma de bajo grado de un glioblastoma.")),
       paragraph(paste0(
         "El modelado confirma y cuantifica ese resultado: los tres clasificadores alcanzan una AUC ",
@@ -133,7 +133,7 @@ ui_conclusiones <- function() {
         paste("La señal que encuentran los contrastes y los modelos coincide con la literatura",
               "clínica: IDH1, IDH2, ATRX, CIC y TP53 hacia LGG, y la edad, PTEN y EGFR hacia GBM.",
               "Que un análisis hecho a ciegas sobre los datos reproduzca el conocimiento médico",
-              "establecido es la mejor validación disponible sin una cohorte externa."),
+              "establecido es una señal de validez, aunque no sustituye a una cohorte externa."),
         titulo = "Coherencia con el conocimiento clínico"
       ),
       titulo = "Resultado principal"
