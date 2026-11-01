@@ -8,51 +8,54 @@ library(patchwork)
 library(scales)
 library(jsonlite)
 
-# Los resultados vienen del capítulo de modelado del Jupyter Book: el
-# experimento se ejecuta en Python (jbook/modelado) y se exporta a CSV con
-#   python -m modelado.exportar_r --destino ../../Proyecto_Viz_R/rbook_gliomas/modelado
-# Este capítulo no reentrena nada; lee esas tablas y las presenta, de modo que
-# las cifras son idénticas a las del Jupyter Book y a las del dashboard.
-DIR_MOD <- "modelado"
-leer <- function(archivo) read_csv(file.path(DIR_MOD, archivo), show_col_types = FALSE)
-esc  <- fromJSON(file.path(DIR_MOD, "escalares.json"))
+# Todo el capítulo se calcula en R: los módulos de R/ definen los pipelines,
+# los cuatro optimizadores, la validación anidada y las pruebas estadísticas
+# (ver R/cargar.R). Los cálculos costosos se guardan en resultados/cache/ la
+# primera vez y se reutilizan después; RECALCULAR = TRUE los repite todos
+# (unas tres horas con dos procesos).
+source("R/cargar.R")
+RECALCULAR <- FALSE
+
+# Al compilar, el capítulo deja también los modelos y el resumen que lee la
+# app Shiny (shinyapp/Gliomas_app/data/).
+EXPORTAR_SHINY <- TRUE
+DIR_SHINY <- "../shinyapp/Gliomas_app/data"
 
 # Formato numérico en español y tabla con el estilo común del libro
 num <- function(x, d = 2) {
   formatC(unname(x), format = "f", digits = d, big.mark = ".", decimal.mark = ",")
 }
 num_p <- function(p) {
-  if (p < 1e-4) sub(".", ",", formatC(p, format = "e", digits = 2), fixed = TRUE) else num(p, 4)
+  p <- unname(p)
+  ifelse(p < 1e-4, sub(".", ",", formatC(p, format = "e", digits = 2), fixed = TRUE), num(p, 4))
 }
 pct <- function(x, d = 0) paste0(num(100 * x, d), " %")
+signo <- function(x, d = 4) paste0(ifelse(x > 0, "+", ""), num(x, d))
+# p-valor para el texto y las tablas: «< 0,001» en lugar de «0,000»
+p_txt <- function(p, d = 3) ifelse(unname(p) < 10^-d, paste0("< ", num(10^-d, d)),
+                                   paste("=", num(p, d)))
+p_tex <- function(p, d = 3) gsub(",", "{,}", p_txt(p, d), fixed = TRUE)
+mayus <- function(x) paste0(toupper(substr(x, 1, 1)), substring(x, 2))
+evaluaciones <- function(n) paste(num(n, 0), ifelse(n == 1, "evaluación", "evaluaciones"))
+# «a, b y c» (o «e» ante una palabra que empieza por i, como «IDH2»)
+lista_y <- function(v) {
+  if (length(v) < 2) return(v)
+  ultimo <- tail(v, 1)
+  paste(paste(head(v, -1), collapse = ", "),
+        if (grepl("^`?[iI]", ultimo) && !grepl("^`?[iI][aeouAEOU]", ultimo)) "e" else "y", ultimo)
+}
 tabla_resultado <- function(df, caption, align = NULL, full_width = FALSE) {
   kable(df, format = "html", align = align, row.names = FALSE,
         caption = sprintf("<b>%s</b>", caption)) |>
     kable_styling(bootstrap_options = c("striped", "hover"), full_width = full_width) |>
     row_spec(0, background = "#1f77b4", color = "white", bold = TRUE)
 }
-
-# Nombres y colores (los mismos de jbook/modelado/config.py)
-MODELOS       <- c("logistica", "random_forest", "xgboost")
-BALANCEOS     <- c("ninguno", "smote", "adasyn", "class_weight")
-OPTIMIZADORES <- c("grid", "random", "bayesiano", "genetico")
-NOMBRE <- c(logistica = "Regresión Logística", random_forest = "Random Forest",
-            xgboost = "XGBoost", ninguno = "Sin balanceo", smote = "SMOTE-NC",
-            adasyn = "ADASYN", class_weight = "class_weight", grid = "Grid Search",
-            random = "Random Search", bayesiano = "Bayesiano (TPE)",
-            genetico = "Genético (DEAP)")
-CORTO <- c(logistica = "RL", random_forest = "RF", xgboost = "XGB", ninguno = "Sin",
-           smote = "SMOTE", adasyn = "ADASYN", class_weight = "CW", grid = "Grid",
-           random = "Random", bayesiano = "TPE", genetico = "GA")
-COLOR_MODELO <- c("Regresión Logística" = "#1f5fa8", "Random Forest" = "#199e70",
-                  "XGBoost" = "#9085e9")
-COLOR_OPTIMIZADOR <- c("Grid Search" = "#8a94a6", "Random Search" = "#1f5fa8",
-                       "Bayesiano (TPE)" = "#199e70", "Genético (DEAP)" = "#9085e9")
-TINTA <- "#2b2f36"
-nombre <- function(x) unname(NOMBRE[x])
 etiqueta_combo <- function(combo) {
   map_chr(str_split(combo, fixed("|")), ~ paste(CORTO[.x], collapse = "·"))
 }
+NUMEROS <- c("una", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez",
+             "once", "doce", "trece", "catorce", "quince", "dieciséis", "diecisiete",
+             "dieciocho", "diecinueve", "veinte", "veintiuna", "veintidós", "veintitrés")
 
 theme_set(
   theme_minimal(base_size = 11) +
@@ -60,43 +63,57 @@ theme_set(
           plot.title = element_text(face = "bold", hjust = 0.5),
           legend.position = "bottom")
 )
+
+datos <- cargar_particion()
+X_train <- datos$X_train; y_train <- datos$y_train
+X_test  <- datos$X_test;  y_test  <- datos$y_test
 ```
 
 El análisis exploratorio identificó un panel reducido de variables con asociación clara con el grado tumoral (`IDH1`, `Age_at_diagnosis`, `PTEN`, `ATRX`, `CIC`, `EGFR`…) y descartó problemas de multicolinealidad (VIF máximo de 3,09). Este capítulo traduce esos hallazgos en un clasificador: estima qué tan bien se puede distinguir un glioma de bajo grado (LGG) de un glioblastoma (GBM) a partir de tres variables clínicas y veinte mutaciones, y qué variables sostienen esa capacidad.
 
 Se comparan tres familias de modelos con supuestos muy distintos:
 
-- **Regresión logística** con regularización L1 o L2: lineal en el log-odds, interpretable coeficiente a coeficiente; es la línea base.
-- **Random Forest**: promedio de árboles decorrelacionados (*bagging* + submuestreo de variables); captura interacciones sin especificarlas.
-- **XGBoost**: árboles construidos de forma secuencial, cada uno corrigiendo el error del anterior (*gradient boosting*), con regularización explícita.
+- Regresión logística (`glmnet`): lineal en el log-odds, con regularización L1 o L2 e interpretable coeficiente a coeficiente; es la línea base.
+- Random Forest (`ranger`): promedio de árboles decorrelacionados (*bagging* + submuestreo de variables); captura interacciones sin especificarlas.
+- XGBoost (`xgboost`): árboles construidos de forma secuencial, cada uno corrigiendo el error del anterior (*gradient boosting*), con regularización explícita.
 
 Cada modelo se combina con cuatro estrategias de balanceo y cuatro métodos de optimización de hiperparámetros, y todas las combinaciones se evalúan con validación cruzada anidada. El conjunto de prueba que el EDA reservó (168 pacientes) solo se usa al final, una vez elegidos los modelos.
 
 <div style="padding: 10px 14px; border-left: 4px solid #1f77b4; background-color: rgba(31, 119, 180, 0.06); border-radius: 4px; margin: 12px 0;">
-**Origen de los resultados.** El experimento se ejecuta en Python, en el paquete `jbook/modelado/` del proyecto, y deja sus resultados en `jbook/resultados/`. El script `python -m modelado.exportar_r` los convierte a las tablas que lee este capítulo (carpeta `modelado/`), calculadas con las mismas funciones y semillas que el Jupyter Book. Por eso las cifras de este libro, del Jupyter Book y del tablero interactivo son idénticas.
+Cómo se calcula este capítulo. Todo el modelado se ejecuta en R a partir de `train_data.csv` y `test_data.csv`. Las funciones están en la carpeta `R/` del libro (pipelines, optimizadores, validación anidada, pruebas estadísticas y exportación para la app Shiny) y el capítulo las llama directamente. Los cálculos costosos se guardan en `resultados/cache/` la primera vez que se compila el libro; con `RECALCULAR <- TRUE`, al inicio del capítulo, se repiten desde cero.
 </div>
 
 ## Configuración y datos
 
 ### Entorno y semilla
 
-La reproducibilidad depende de dos cosas: una semilla única y las versiones exactas de las librerías. La semilla global (`SEED = 42`, la misma del EDA) se pasa explícitamente a la partición, a cada `StratifiedKFold`, a los modelos, a los muestreadores de balanceo, al muestreador TPE de Optuna y al generador del algoritmo genético. Las versiones se registran junto a los resultados.
+La reproducibilidad depende de dos cosas: una semilla única y las versiones exactas de los paquetes. La semilla global (`SEED = 42`, la misma del EDA) se pasa explícitamente a los pliegues de `rsample`, a los modelos, al sobremuestreo de `themis` y a los dos optimizadores con azar (`ParBayesianOptimization` y `GA`). Las versiones de la ejecución que produjo los resultados se registran junto a ellos.
 
 ```{r entorno-mod}
-leer("entorno.csv") |>
+entorno_t <- en_cache("entorno", entorno, RECALCULAR)
+# Si alguna versión no quedó registrada al crear la caché ("—"), se toma de la
+# sesión actual y se guarda, para que la tabla no quede incompleta.
+faltan <- entorno_t$valor == "—"
+if (any(faltan)) {
+  actual <- entorno()
+  entorno_t$valor[faltan] <- actual$valor[match(entorno_t$componente[faltan], actual$componente)]
+  saveRDS(entorno_t, file.path(DIR_CACHE, "entorno.rds"))
+}
+entorno_t |>
   rename(Componente = componente, `Versión / valor` = valor) |>
   tabla_resultado("Entorno de ejecución del experimento", align = c("l", "r"))
 ```
 
 ### Partición y predictoras
 
-La partición replica exactamente la del EDA: mismo archivo, 80/20 estratificado por `Grade` y `random_state = 42`. Por eso los 168 pacientes de prueba son los mismos que el análisis exploratorio nunca miró.
+La partición es la del EDA: los 671 pacientes de entrenamiento y los 168 de prueba se leen de `train_data.csv` y `test_data.csv`, de modo que los pacientes de prueba son los mismos que el análisis exploratorio nunca miró.
 
 ```{r particion-mod}
-particion <- leer("particion.csv")
-particion |>
-  transmute(Conjunto = conjunto, Pacientes = pacientes, `LGG (0)` = lgg, `GBM (1)` = gbm,
-            `% GBM` = num(100 * gbm / pacientes, 1)) |>
+tibble(Conjunto = c("Entrenamiento", "Prueba"),
+       Pacientes = c(length(y_train), length(y_test)),
+       `LGG (0)` = c(sum(y_train == 0), sum(y_test == 0)),
+       `GBM (1)` = c(sum(y_train == 1), sum(y_test == 1))) |>
+  mutate(`% GBM` = num(100 * `GBM (1)` / Pacientes, 1)) |>
   tabla_resultado("Partición entrenamiento / prueba", align = c("l", "r", "r", "r", "r"))
 ```
 
@@ -106,7 +123,7 @@ Las 23 predictoras entran completas a los modelos. El EDA mostró que ninguna es
 |---|---|---|
 | `Age_at_diagnosis` | Continua | Estandarización con la media y la desviación del pliegue de entrenamiento |
 | `Gender` | Binaria | Ninguno (0 = hombre, 1 = mujer) |
-| `Race_binary` | Binaria | Agrupación del EDA: 0 = White, 1 = otros grupos (las categorías Asian y American Indian tienen 14 y 1 pacientes) |
+| `Race_binary` | Binaria | Agrupación del EDA: 0 = White, 1 = otros grupos (las categorías Asian y American Indian tienen 13 y 1 pacientes en entrenamiento) |
 | 20 genes | Binarias | Ninguno (0 = no mutado, 1 = mutado) |
 
 ## Diseño experimental
@@ -117,92 +134,111 @@ El proyecto no consiste en entrenar un modelo, sino en recorrer de forma sistem�
 
 | Etapa | Alternativas | n |
 |---|---|---|
-| 1. Modelo base | Regresión Logística (L1/L2), Random Forest, XGBoost | 3 |
-| 2. Balanceo de clases | Sin balanceo, SMOTE-NC, ADASYN, `class_weight='balanced'` | 4 |
-| 3. Optimización de hiperparámetros | Grid Search, Random Search, Bayesiana (Optuna, TPE), Genética (DEAP) | 4 |
+| 1. Modelo base | Regresión Logística L1/L2 (`glmnet`), Random Forest (`ranger`), XGBoost (`xgboost`) | 3 |
+| 2. Balanceo de clases | Sin balanceo, SMOTE-NC y ADASYN (`themis`), pesos de clase | 4 |
+| 3. Optimización de hiperparámetros | Grid Search, Random Search, Bayesiana (`ParBayesianOptimization`), Genética (`GA`) | 4 |
 | **Total** | $3 \times 4 \times 4$ | **48** |
 
-Cada una de las 48 combinaciones se entrena y evalúa de forma independiente dentro de una validación cruzada anidada de $10 \times 3$ pliegues con 24 evaluaciones de hiperparámetros por búsqueda: en total `r num(esc$n_eval_total, 0)` configuraciones probadas y `r num(3 * esc$n_eval_total, 0)` ajustes internos, que tomaron `r num(esc$minutos_total, 1)` minutos de reloj con dos procesos. Cada corrida queda registrada en una tabla maestra con su modelo, balanceo, optimizador, métricas del bucle externo, tiempos y semilla, y en una tabla por pliegue con los hiperparámetros elegidos en cada uno.
+```{r experimento-mod, include = FALSE}
+completo <- all(file.exists(pmap_chr(combinaciones(), archivo_parcial)))
+exp_res <- if (RECALCULAR || !completo) {
+  correr_experimento(X_train, y_train, procesos = PROCESOS)
+} else {
+  consolidar()
+}
+resumen     <- exp_res$resumen
+pliegues    <- exp_res$pliegues
+historiales <- exp_res$historiales
+geneticos   <- exp_res$geneticos
+oof         <- exp_res$oof
+n_eval_total <- sum(resumen$n_eval_total)
+```
+
+Cada una de las 48 combinaciones se entrena y evalúa de forma independiente dentro de una validación cruzada anidada de $10 \times 3$ pliegues con 24 evaluaciones de hiperparámetros por búsqueda: en total `r num(n_eval_total, 0)` configuraciones probadas y `r num(3 * n_eval_total, 0)` ajustes internos, que tomaron `r num(sum(resumen$t_total_s) / 60, 1)` minutos de reloj con dos procesos. Cada corrida queda registrada en una tabla maestra (`resultados/experimentos.csv`) con su modelo, balanceo, optimizador, métricas del bucle externo, tiempos y semilla, y en una tabla por pliegue (`resultados/pliegues.csv`) con los hiperparámetros elegidos en cada uno.
 
 ### Validación cruzada anidada
 
 Elegir hiperparámetros mirando el desempeño en unos datos y reportar ese mismo desempeño sobreestima la capacidad del modelo (sesgo de selección). La validación anidada separa las dos tareas:
 
-- **Bucle externo (10 pliegues estratificados):** solo mide. En cada pliegue, 604 pacientes se usan para buscar y ajustar, y 67 (unos 28 GBM) para evaluar. La métrica que se reporta en todo el capítulo sale de aquí.
-- **Bucle interno (3 pliegues estratificados):** dentro de los 604 pacientes de cada pliegue externo, cada configuración candidata se evalúa con una validación cruzada de 3 pliegues; el optimizador solo ve esta AUC interna.
+- Bucle externo (10 pliegues estratificados, `rsample::vfold_cv`): solo mide. En cada pliegue, unos 604 pacientes se usan para buscar y ajustar, y 67 (unos 28 GBM) para evaluar. La métrica que se reporta en todo el capítulo sale de aquí.
+- Bucle interno (3 pliegues estratificados): dentro de los 604 pacientes de cada pliegue externo, cada configuración candidata se evalúa con una validación cruzada de 3 pliegues; el optimizador solo ve esta AUC interna.
 
-Se eligieron **10 pliegues externos** porque con 671 pacientes cada pliegue de validación conserva unos 28 GBM, suficientes para una AUC estable, y porque las pruebas de Friedman y Nemenyi de la sección \@ref(comparacion-estadistica) usan los pliegues como bloques: con 5 pliegues la diferencia crítica sería tan grande que ninguna comparación tendría potencia. En el bucle interno bastan **3 pliegues**: cada validación interna tiene unos 200 pacientes y el costo total se multiplica por $K_\text{int}$ en cada una de las evaluaciones.
+Se eligieron 10 pliegues externos porque con 671 pacientes cada pliegue de validación conserva unos 28 GBM, suficientes para una AUC estable, y porque las pruebas de Friedman y Nemenyi de la sección \@ref(comparacion-estadistica) usan los pliegues como bloques: con 5 pliegues la diferencia crítica sería tan grande que ninguna comparación tendría potencia. En el bucle interno bastan 3 pliegues: cada validación interna tiene unos 200 pacientes y el costo total se multiplica por $K_\text{int}$ en cada una de las evaluaciones.
 
 ### Métrica de validación
 
-El criterio que guía la búsqueda es el **área bajo la curva ROC (AUC)**. Es independiente del umbral de decisión, no se distorsiona con el desbalance moderado del problema (58 % LGG / 42 % GBM) y mide lo que se busca: ordenar a los pacientes por riesgo de GBM. Como métrica clínica secundaria se sigue de cerca el **recall de GBM** (sensibilidad): clasificar un glioblastoma como glioma de bajo grado retrasa un tratamiento agresivo, mientras que el error contrario lleva a pruebas adicionales; un falso negativo es más costoso que un falso positivo. Se reportan además accuracy, precision, F1 y Brier.
+El criterio que guía la búsqueda es el área bajo la curva ROC (AUC). Es independiente del umbral de decisión, no se distorsiona con el desbalance moderado del problema (58 % LGG / 42 % GBM) y mide lo que se busca: ordenar a los pacientes por riesgo de GBM. Como métrica clínica secundaria se sigue de cerca el recall de GBM (sensibilidad): clasificar un glioblastoma como glioma de bajo grado retrasa un tratamiento agresivo, mientras que el error contrario lleva a pruebas adicionales; un falso negativo es más costoso que un falso positivo. Se reportan además accuracy, precision, F1 y Brier.
 
 ### Balanceo de clases
 
-La relación de clases es de 1,38 a 1, un desbalance leve. Se comparan cuatro estrategias, siempre aplicadas **dentro** del pipeline, de modo que nunca se generan pacientes sintéticos a partir de pacientes de validación:
+La relación de clases es de 1,38 a 1, un desbalance leve. Se comparan cuatro estrategias, siempre aplicadas dentro del pipeline, de modo que nunca se generan pacientes sintéticos a partir de pacientes de validación:
 
-- **Sin balanceo:** línea base.
-- **SMOTE-NC:** la variante de SMOTE para predictoras mixtas. Con 22 predictoras binarias, el SMOTE clásico generaría pacientes con valores imposibles (una mutación de 0,37); SMOTE-NC interpola solo la edad y asigna a cada variable binaria el valor más frecuente entre los vecinos.
-- **ADASYN:** genera más pacientes sintéticos en las zonas donde la clase minoritaria es difícil de aprender. No tiene variante nominal, así que sí produce valores intermedios en las binarias; se mantiene como término de comparación.
-- **`class_weight='balanced'`:** no crea datos; pondera cada error por el inverso de la frecuencia de su clase. En XGBoost el equivalente es `scale_pos_weight = n_LGG / n_GBM`, calculado en cada pliegue de entrenamiento.
+- Sin balanceo: línea base.
+- SMOTE-NC (`themis::smotenc`): la variante de SMOTE para predictoras mixtas. Con 22 predictoras binarias, el SMOTE clásico generaría pacientes con valores imposibles (una mutación de 0,37); SMOTE-NC interpola solo la edad y asigna a cada variable binaria el valor más frecuente entre los vecinos.
+- ADASYN (`themis::adasyn`): genera más pacientes sintéticos en las zonas donde la clase minoritaria es difícil de aprender. No tiene variante nominal, así que sí produce valores intermedios en las binarias; se mantiene como término de comparación.
+- Pesos de clase: no crea datos; pondera cada error por el inverso de la frecuencia de su clase ($w_c = n / (2 n_c)$). En `glmnet` entra como `weights`, en `ranger` como `class.weights` y en XGBoost como `scale_pos_weight = n_LGG / n_GBM`, calculado siempre en el pliegue de entrenamiento.
 
 ### Espacios de búsqueda
 
-Cada modelo tiene **un único** espacio de búsqueda del que se derivan las cuatro representaciones que piden los optimizadores (rejilla, distribuciones, sugerencias de Optuna y genoma), así que los cuatro métodos exploran el mismo dominio. Los parámetros de escala multiplicativa ($C$, *learning rate*, `min_child_weight`, $\lambda$) se muestrean en escala logarítmica.
+Cada modelo tiene un único espacio de búsqueda del que se derivan las cuatro representaciones que piden los optimizadores (rejilla, muestreo aleatorio, cubo unidad del optimizador bayesiano y genoma del algoritmo genético), así que los cuatro métodos exploran el mismo dominio. Los parámetros de escala multiplicativa ($\lambda$, *learning rate*, `min_child_weight`) se muestrean en escala logarítmica.
 
-| Modelo | Hiperparámetro | Tipo | Dominio (Random, TPE, Genético) | Rejilla (Grid) |
-|---|---|---|---|---|
-| Regresión Logística | `penalty` | categórico | l1, l2 | l1, l2 |
-| | `C` | real | [0,001; 100], log | 12 valores entre 0,001 y 100 |
-| Random Forest | `max_depth` | entero | [2; 16] | 3, 5, 8, 16 |
-| | `min_samples_leaf` | entero | [1; 20] | 1, 4, 10 |
-| | `max_features` | real | [0,1; 1] | 0,2; 0,5 |
-| XGBoost | `max_depth` | entero | [2; 8] | 2, 3, 5 |
-| | `learning_rate` | real | [0,01; 0,3], log | 0,03; 0,1 |
-| | `n_estimators` | entero | [50; 400] | 100, 300 |
-| | `min_child_weight` | real | [1; 10], log | 1, 5 |
-| | `subsample` | real | [0,6; 1] | por defecto |
-| | `colsample_bytree` | real | [0,5; 1] | por defecto |
-| | `reg_lambda` | real | [0,01; 10], log | por defecto |
+```{r espacios-mod}
+formatear_valor <- function(v) {
+  if (is.character(v)) return(v)
+  ifelse(v < 0.01, sub("e-0", "e-", formatC(v, format = "e", digits = 1)),
+         formatC(v, format = "fg", digits = 3, decimal.mark = ","))
+}
+map_dfr(MODELOS, function(m) map_dfr(ESPACIOS[[m]], function(p) {
+  tibble(Modelo = nombre(m), `Hiperparámetro` = sprintf("`%s`", p$nombre),
+         Tipo = c(cat = "categórico", int = "entero", float = "real")[p$tipo],
+         `Dominio (Random, bayesiano, genético)` = if (p$tipo == "cat") {
+           paste(p$opciones, collapse = ", ")
+         } else {
+           paste0("[", formatear_valor(p$bajo), "; ", formatear_valor(p$alto), "]",
+                  if (p$log) ", log" else "")
+         },
+         `Rejilla (Grid)` = if (is.null(p$rejilla)) "por defecto" else
+           paste(formatear_valor(p$rejilla), collapse = "; "))
+})) |>
+  mutate(Modelo = ifelse(duplicated(Modelo), "", Modelo)) |>
+  tabla_resultado("Espacios de búsqueda de los tres modelos", align = c("l", "l", "l", "l", "l"))
+```
 
 Los rangos se fijaron a partir del tamaño de los datos:
 
-- **Regresión logística:** $C \in [10^{-3}, 10^{2}]$ cubre desde una regularización que anula casi todos los coeficientes hasta una prácticamente nula; L1 permite que el modelo descarte variables por sí mismo.
-- **Random Forest:** con 600 pacientes, una profundidad mayor que 16 equivale a árboles sin límite; `min_samples_leaf` hasta 20 (≈ 3 % del pliegue) controla el sobreajuste; `max_features` en fracción de las 23 variables. El número de árboles se fija en 200: más árboles no sobreajustan, solo cuestan tiempo.
-- **XGBoost:** árboles poco profundos (2–8) porque las señales principales (IDH1, edad) son casi aditivas; *learning rate* y número de árboles en rangos que mantienen su producto razonable; submuestreo de filas y columnas y regularización L2 como defensas adicionales contra el sobreajuste.
+- Regresión logística: `glmnet` minimiza la devianza media más $\lambda$ veces la penalización (L1 con `alpha = 1`, L2 con `alpha = 0`). $\lambda \in [10^{-4}, 1]$ cubre desde una regularización prácticamente nula hasta una que, con L1, anula todos los coeficientes; L1 permite que el modelo descarte variables por sí mismo.
+- Random Forest: con 600 pacientes, una profundidad mayor que 16 equivale a árboles sin límite; `min.bucket` (pacientes mínimos por hoja) hasta 20 (≈ 3 % del pliegue) controla el sobreajuste; `mtry` en fracción de las 23 variables. El número de árboles se fija en 200: más árboles no sobreajustan, solo cuestan tiempo.
+- XGBoost: árboles poco profundos (2–8) porque las señales principales (IDH1, edad) son casi aditivas; *learning rate* (`eta`) y número de rondas (`nrounds`) en rangos que mantienen su producto razonable; submuestreo de filas y columnas y regularización L2 (`lambda`) como defensas adicionales contra el sobreajuste.
 
 La rejilla de Grid Search tiene exactamente 24 puntos en los tres modelos, el mismo presupuesto que reciben los demás optimizadores. En XGBoost la rejilla no puede cubrir las siete dimensiones con 24 puntos, así que solo varía cuatro y deja las otras tres en su valor por defecto: es precisamente la limitación de Grid Search en espacios de alta dimensión que esta comparación quiere medir.
 
 ### Los cuatro optimizadores
 
-Todos reciben **24 evaluaciones**, el mismo particionador interno y el mismo pipeline, así que la comparación es a presupuesto fijo.
+Todos reciben 24 evaluaciones, los mismos pliegues internos y el mismo pipeline, así que la comparación es a presupuesto fijo.
 
-**Grid Search** recorre la rejilla completa en orden. Es exhaustivo pero rígido: gasta el presupuesto en combinaciones fijas aunque una dimensión no importe.
+Grid Search recorre la rejilla completa en orden (la de `expand.grid`). Es exhaustivo pero rígido: gasta el presupuesto en combinaciones fijas aunque una dimensión no importe.
 
-**Random Search** muestrea 24 configuraciones independientes del dominio continuo. Bergstra y Bengio (2012) muestran que, cuando solo unas pocas dimensiones importan, explora cada una con más valores distintos que una rejilla del mismo tamaño.
+Random Search muestrea 24 configuraciones independientes del dominio continuo. Bergstra y Bengio (2012) muestran que, cuando solo unas pocas dimensiones importan, explora cada una con más valores distintos que una rejilla del mismo tamaño.
 
-**Optimización bayesiana (Optuna, TPE).** El preprocesamiento y el modelo se construyen como un pipeline completo dentro de la función objetivo, así cada evaluación ajusta el escalado y el balanceo solo con los datos de entrenamiento de cada pliegue interno.
+Optimización bayesiana (`ParBayesianOptimization`). La función objetivo ajusta el pipeline completo (escalado, balanceo y modelo) en cada pliegue interno, así que ninguna evaluación preprocesa con datos de validación.
 
-- *Modelo sustituto:* **Tree-structured Parzen Estimator**. En lugar de modelar $p(\text{AUC} \mid \lambda)$ con un proceso gaussiano, divide las evaluaciones en un grupo "bueno" (cuantil superior $\gamma$) y uno "malo", y ajusta una densidad de Parzen a cada uno: $\ell(\lambda)$ y $g(\lambda)$. Escala bien a espacios con variables categóricas y enteras, como los de este problema.
-- *Función de adquisición:* **Mejora Esperada (EI)**. Con el sustituto TPE, maximizar EI equivale a maximizar $\ell(\lambda)/g(\lambda)$ (Bergstra et al., 2011). Las primeras 8 evaluaciones son aleatorias (exploración pura); a partir de ahí el cociente favorece las regiones donde ya hubo buenas configuraciones (explotación), sin eliminar la exploración, porque los candidatos se muestrean de una densidad y no de un óptimo puntual.
+- *Modelo sustituto:* proceso gaussiano (krigeado de `DiceKriging`) sobre la AUC interna. El espacio se le presenta como el cubo unidad $[0, 1]^d$; las escalas logarítmicas, los enteros y la penalización categórica se resuelven al decodificar cada punto, que es la normalización habitual para un núcleo estacionario.
+- *Función de adquisición:* Mejora Esperada (EI), $\text{EI}(\lambda) = \mathbb{E}[\max(0, f(\lambda) - f^{*})]$, que se maximiza sobre el proceso gaussiano desde 20 puntos de arranque. Las primeras 8 evaluaciones son aleatorias (exploración pura); en las 16 siguientes la EI pesa a la vez la media predicha (explotación) y su incertidumbre (exploración).
 
-**Algoritmo genético (DEAP).** Cada individuo es un vector de genes en $[0, 1]$, uno por hiperparámetro, que se decodifica al dominio real (lineal, logarítmico, entero o categórico). La evaluación de cada individuo es una validación cruzada interna del pipeline completo, sin fuga de información.
+Algoritmo genético (`GA`). Cada individuo es un vector de genes reales en $[0, 1]$, uno por hiperparámetro, que se decodifica al dominio real (lineal, logarítmico, entero o categórico). Se usan los operadores por defecto de `GA::ga` para codificación real; solo la población se ajusta al presupuesto.
 
 | Componente | Elección | Justificación |
 |---|---|---|
-| Selección | Torneo de tamaño 3 | Presión selectiva moderada que no depende de la escala de la aptitud: todas las AUC están entre 0,85 y 0,93 y una ruleta apenas distinguiría entre ellas |
-| Cruce | *Blend* (BLX-α, α = 0,5), probabilidad 0,7 | Genera hijos dentro y alrededor del segmento entre los padres; adecuado para genes reales |
-| Mutación | Gaussiana (σ = 0,2, probabilidad por gen 0,3), probabilidad 0,3 por individuo | Saltos de tamaño moderado que mantienen diversidad |
-| Elitismo | Esquema $(\mu + \lambda)$ con $\mu = \lambda = 6$ y `HallOfFame` | La siguiente generación sale de padres e hijos juntos; el mejor individuo nunca se pierde |
-| Presupuesto | 6 iniciales + 3 generaciones × 6 hijos = 24 | Igual al de los demás métodos; configuraciones repetidas se cachean y no consumen presupuesto |
+| Selección | Proporcional con escalamiento lineal de la aptitud (`gareal_lsSelection`) | El escalamiento separa aptitudes muy parecidas: todas las AUC están entre 0,85 y 0,93 y una ruleta sin escalar apenas distinguiría entre ellas |
+| Cruce | Aritmético local (`gareal_laCrossover`), probabilidad 0,8 | Cada hijo es una combinación convexa de los padres con pesos al azar; adecuado para genes reales |
+| Mutación | Uniforme aleatoria (`gareal_raMutation`), probabilidad 0,1 | Reemplaza un gen por un valor al azar de su rango y mantiene diversidad |
+| Elitismo | 1 individuo (el 5 % de la población, como mínimo uno) | El mejor individuo pasa intacto a la siguiente generación y nunca se pierde |
+| Población y presupuesto | 6 individuos; la búsqueda se detiene al pedir la evaluación 25 | Igual presupuesto que los demás métodos; las configuraciones repetidas se recuerdan y no consumen presupuesto |
 | Diversidad | Distancia euclídea media entre genomas, normalizada por $\sqrt{d}$ | Si cae a cero antes de tiempo, hay convergencia prematura |
 
 ## Resultados de la validación anidada
 
 ```{r tabla-maestra-mod, class.source = "fold-hide"}
-resumen  <- leer("experimentos.csv")
-pliegues <- leer("pliegues.csv")
-
 media_de <- function(media, de, d = 3) paste(num(media, d), "±", num(de, d))
 
 tabla_maestra <- resumen |>
@@ -249,13 +285,29 @@ ggplot(mapa, aes(columna, fila, fill = auc_media)) +
 ```
 
 ```{r valores-maestra-mod, include = FALSE}
-mejor_combo <- resumen |> slice_max(auc_media, n = 1)
+orden_auc   <- resumen |> arrange(desc(auc_media))
+mejor_combo <- orden_auc[1, ]
 rl_mejor    <- resumen |> filter(modelo == "logistica") |> slice_max(auc_media, n = 1)
+de_dentro   <- mean(resumen$auc_de)
+de_entre    <- sd(resumen$auc_media)
+rango_medias <- max(resumen$auc_media) - min(resumen$auc_media)
+describir <- function(f) {
+  if (f$balanceo == "ninguno") {
+    sprintf("%s sin balanceo con %s", nombre(f$modelo), nombre(f$metodo))
+  } else {
+    sprintf("%s con %s y %s", nombre(f$modelo), str_to_lower(nombre(f$balanceo)), nombre(f$metodo))
+  }
+}
+col_peor <- mapa |>
+  group_by(modelo, balanceo) |>
+  slice_min(auc_media, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  count(metodo, sort = TRUE)
 ```
 
-Las 48 combinaciones quedan en una franja muy estrecha: la AUC media del bucle externo va de `r num(min(resumen$auc_media), 3)` a `r num(max(resumen$auc_media), 3)`, una diferencia de `r num(esc$rango_medias, 3)`, mientras que la desviación estándar de **cada** combinación entre pliegues ronda `r num(esc$de_dentro, 2)`. Es decir, la variación de un pliegue a otro es casi tres veces mayor que la distancia entre la mejor y la peor combinación. La mejor es `r nombre(mejor_combo$modelo)` sin balanceo con optimización bayesiana (`r num(mejor_combo$auc_media, 3)` ± `r num(mejor_combo$auc_de, 3)`), seguida de dos Random Forest con TPE (ADASYN y `class_weight`) y de la regresión logística sin balanceo (`r num(rl_mejor$auc_media, 3)`), que con un modelo lineal y `r num(rl_mejor$t_total_s, 0)` segundos de cómputo queda a `r num(mejor_combo$auc_media - rl_mejor$auc_media, 3)` del primer puesto.
+Las 48 combinaciones quedan en una franja muy estrecha: la AUC media del bucle externo va de `r num(min(resumen$auc_media), 3)` a `r num(max(resumen$auc_media), 3)`, una diferencia de `r num(rango_medias, 3)`, mientras que la desviación estándar de cada combinación entre pliegues ronda `r num(de_dentro, 2)`. Es decir, la variación de un pliegue a otro es `r num(de_dentro / rango_medias, 1)` veces la distancia entre la mejor y la peor combinación. La mejor es `r describir(mejor_combo)` (`r num(mejor_combo$auc_media, 3)` ± `r num(mejor_combo$auc_de, 3)`), seguida de `r describir(orden_auc[2, ])` (`r num(orden_auc$auc_media[2], 3)`) y de `r describir(orden_auc[3, ])` (`r num(orden_auc$auc_media[3], 3)`). La mejor regresión logística (`r str_to_lower(nombre(rl_mejor$balanceo))`, `r nombre(rl_mejor$metodo)`) llega a `r num(rl_mejor$auc_media, 3)` con `r num(rl_mejor$t_total_s, 0)` segundos de cómputo, a `r num(mejor_combo$auc_media - rl_mejor$auc_media, 3)` del primer puesto.
 
-Dos patrones se repiten en el mapa: la regresión logística es casi insensible al optimizador (su espacio tiene solo dos dimensiones y todos los métodos llegan a la misma región de $C$), y el algoritmo genético ocupa la última columna en casi todas las filas de los modelos de árboles. La sección \@ref(comparacion-optimizadores) explica por qué. Si estas diferencias son reales o ruido de muestreo es lo que decide la sección \@ref(comparacion-estadistica).
+En el mapa, el optimizador que más veces ocupa el peor puesto de su fila es `r nombre(col_peor$metodo[1])` (`r col_peor$n[1]` de las 12 filas). La sección \@ref(comparacion-optimizadores) compara los optimizadores en detalle, y si estas diferencias son reales o ruido de muestreo es lo que decide la sección \@ref(comparacion-estadistica).
 
 ### Efecto del balanceo
 
@@ -302,11 +354,26 @@ tabla_resultado(tabla_bal, "Media de AUC, recall y F1 por técnica de balanceo",
 media_bal <- function(m, b, met) {
   pliegues |> filter(modelo == m, balanceo == b) |> pull({{ met }}) |> mean()
 }
+rango_auc_bal <- bal |> filter(metrica == "AUC") |> group_by(modelo) |>
+  summarise(r = max(media) - min(media)) |> pull(r) |> max()
 ```
 
-Como se esperaba, el balanceo casi no mueve la AUC (todas las técnicas quedan dentro de ±0,005 para cada modelo), porque reequilibrar las clases cambia la escala de las probabilidades pero apenas el orden de los pacientes. Su efecto aparece con el umbral de 0,5: las tres técnicas suben el recall de GBM entre 1 y 2,5 puntos (de `r num(media_bal("logistica", "ninguno", recall), 3)` a `r num(media_bal("logistica", "class_weight", recall), 3)` en la logística, de `r num(media_bal("xgboost", "ninguno", recall), 3)` a `r num(media_bal("xgboost", "class_weight", recall), 3)` en XGBoost) a cambio de una precision algo menor, y el F1 queda prácticamente igual.
+```{r valores-balanceo-mod, include = FALSE}
+rec_bal <- bal |> filter(metrica == "Recall (GBM)") |> group_by(modelo) |>
+  summarise(sin = media[balanceo == "ninguno"], max_otro = max(media[balanceo != "ninguno"]),
+            mejor_b = balanceo[balanceo != "ninguno"][which.max(media[balanceo != "ninguno"])])
+sube_recall <- rec_bal$max_otro - rec_bal$sin
+prec_bal <- bal |> filter(metrica == "Precision") |> group_by(modelo) |>
+  summarise(baja = media[balanceo == "ninguno"] - min(media[balanceo != "ninguno"]))
+f1_cw_rl <- media_bal("logistica", "class_weight", f1)
+f1_mejor_rl <- bal |> filter(metrica == "F1", modelo == "logistica") |> slice_max(media, n = 1)
+t_smote <- resumen |> group_by(balanceo) |> summarise(t = mean(t_total_s))
+veces_smote <- t_smote$t[t_smote$balanceo == "smote"] / t_smote$t[t_smote$balanceo == "ninguno"]
+```
 
-`class_weight` consigue ese desplazamiento sin crear pacientes, cuesta lo mismo que no balancear y es la técnica con mejor F1 en la regresión logística. SMOTE-NC y ADASYN dan resultados parecidos, pero multiplican el costo: el sobremuestreo de SMOTE-NC sobre 22 variables nominales es la operación más lenta de todo el pipeline (sección \@ref(optimizacion-computacional)). Con un desbalance de 1,38:1, el sobremuestreo sintético no aporta nada que la ponderación no consiga, y ADASYN añade además valores binarios intermedios que no corresponden a ningún paciente real. La técnica de balanceo es, en este problema, una herramienta para **elegir el punto de operación** (más recall o más precision), no para mejorar la discriminación.
+Como se esperaba, el balanceo apenas mueve la AUC: para cada modelo, las cuatro técnicas quedan a menos de `r num(rango_auc_bal, 3)` entre sí, porque reequilibrar las clases cambia la escala de las probabilidades pero apenas el orden de los pacientes. Su efecto aparece con el umbral de 0,5: la técnica que más sube el recall de GBM lo lleva de `r num(rec_bal$sin[rec_bal$modelo == "logistica"], 3)` a `r num(rec_bal$max_otro[rec_bal$modelo == "logistica"], 3)` en la logística, de `r num(rec_bal$sin[rec_bal$modelo == "random_forest"], 3)` a `r num(rec_bal$max_otro[rec_bal$modelo == "random_forest"], 3)` en Random Forest y de `r num(rec_bal$sin[rec_bal$modelo == "xgboost"], 3)` a `r num(rec_bal$max_otro[rec_bal$modelo == "xgboost"], 3)` en XGBoost, a cambio de una precision algo menor (hasta `r num(max(prec_bal$baja), 3)` menos), y el F1 queda prácticamente igual.
+
+Los pesos de clase consiguen ese desplazamiento sin crear pacientes y cuestan lo mismo que no balancear. SMOTE-NC y ADASYN dan resultados parecidos, pero encarecen el cómputo: el sobremuestreo de SMOTE-NC sobre 22 variables nominales (distancias de Gower entre todos los pacientes) hace que sus combinaciones tarden en promedio `r num(veces_smote, 1)` veces lo que las que no balancean (sección \@ref(optimizacion-computacional)). Con un desbalance de 1,38:1, el sobremuestreo sintético no aporta nada que la ponderación no consiga, y ADASYN añade además valores binarios intermedios que no corresponden a ningún paciente real. La técnica de balanceo es, en este problema, una herramienta para elegir el punto de operación (más recall o más precision), no para mejorar la discriminación.
 
 ## Comparación de los métodos de optimización {#comparacion-optimizadores}
 
@@ -314,10 +381,25 @@ Como se esperaba, el balanceo casi no mueve la AUC (todas las técnicas quedan d
 
 Cada búsqueda guarda la AUC interna de cada una de sus 24 evaluaciones en el orden en que se hicieron. El máximo acumulado de esa secuencia, $\max_{s \le t} \text{AUC}_s$, es la mejor solución disponible si la búsqueda se detuviera en la evaluación $t$. Las curvas promedian las 40 búsquedas de cada modelo y optimizador (4 balanceos × 10 pliegues externos). En Grid Search el orden es el de la rejilla, de modo que su curva depende de cómo esté escrita.
 
-Como las cuatro curvas quedan a milésimas unas de otras, se grafica la **brecha**: en cada bloque (balanceo × pliegue externo), la mejor AUC interna que encontró cualquiera de los cuatro métodos menos la mejor que lleva el método en la evaluación $t$. Escala logarítmica; más abajo es mejor.
+Como las cuatro curvas quedan a milésimas unas de otras, se grafica la brecha: en cada bloque (balanceo × pliegue externo), la mejor AUC interna que encontró cualquiera de los cuatro métodos menos la mejor que lleva el método en la evaluación $t$. Escala logarítmica; más abajo es mejor.
 
 ```{r anytime-mod, fig.width = 11, fig.height = 4.2, class.source = "fold-hide"}
-leer("anytime_brecha.csv") |>
+acumulada <- function(h) {
+  c_ <- cummax(h)
+  c(c_, rep(tail(c_, 1), max(0, PRESUPUESTO - length(c_))))[seq_len(PRESUPUESTO)]
+}
+anytime <- map_dfr(MODELOS, function(m) {
+  curvas <- map(set_names(OPTIMIZADORES), function(o) {
+    do.call(rbind, map(BALANCEOS, ~ do.call(rbind, map(historiales[[id_combo(m, .x, o)]], acumulada))))
+  })
+  referencia <- do.call(pmax, map(curvas, ~ .x[, PRESUPUESTO]))
+  map_dfr(OPTIMIZADORES, function(o) {
+    tibble(modelo = m, metodo = o, t = seq_len(PRESUPUESTO),
+           brecha = colMeans(referencia - curvas[[o]]))
+  })
+})
+
+anytime |>
   mutate(Modelo = factor(nombre(modelo), levels = nombre(MODELOS)),
          Optimizador = factor(nombre(metodo), levels = nombre(OPTIMIZADORES)),
          brecha = pmax(brecha, 1e-4)) |>
@@ -333,17 +415,40 @@ leer("anytime_brecha.csv") |>
 
 ### Evidencia cuantitativa de eficiencia
 
-Comparar curvas a ojo no basta. Para cada uno de los 120 bloques (3 modelos × 4 balanceos × 10 pliegues externos) se toma como referencia la mejor AUC interna que encontró **cualquiera** de los cuatro métodos en ese bloque, y para cada método se mide:
+Comparar curvas a ojo no basta. Para cada uno de los 120 bloques (3 modelos × 4 balanceos × 10 pliegues externos) se toma como referencia la mejor AUC interna que encontró cualquiera de los cuatro métodos en ese bloque, y para cada método se mide:
 
 - la mejor AUC interna tras 6, 12 y 24 evaluaciones;
-- el **área bajo la curva anytime** (media de la curva en las 24 evaluaciones; premia llegar pronto);
-- el **porcentaje de bloques** en que el método llega a menos de 0,001 de la referencia, y la **mediana de evaluaciones** que necesita para hacerlo;
+- el área bajo la curva anytime (media de la curva en las 24 evaluaciones; premia llegar pronto);
+- el porcentaje de bloques en que el método llega a menos de 0,001 de la referencia, y la mediana de evaluaciones que necesita para hacerlo;
 - la AUC del bucle externo, que es lo que importa al final, y el tiempo por evaluación.
 
-Las diferencias frente a Random Search se contrastan con la prueba de Wilcoxon pareada por bloque, con ajuste de Holm.
+Las diferencias frente a Random Search se contrastan con la prueba de Wilcoxon de rangos con signo pareada por bloque (`wilcox.test`), con ajuste de Holm (`p.adjust`).
 
 ```{r eficiencia-mod, class.source = "fold-hide"}
-eficiencia <- leer("eficiencia.csv")
+bloques <- map_dfr(MODELOS, function(m) map_dfr(BALANCEOS, function(b) {
+  curvas <- map(set_names(OPTIMIZADORES), ~ map(historiales[[id_combo(m, b, .x)]], acumulada))
+  map_dfr(seq_len(K_EXTERNO), function(f) {
+    referencia <- max(map_dbl(curvas, ~ tail(.x[[f]], 1)))
+    map_dfr(OPTIMIZADORES, function(o) {
+      c_ <- curvas[[o]][[f]]
+      llega <- c_ >= referencia - 0.001
+      tibble(modelo = m, balanceo = b, pliegue = f - 1L, metodo = o, t6 = c_[6], t12 = c_[12],
+             t24 = c_[24], area = mean(c_), llega = any(llega),
+             evals = if (any(llega)) which(llega)[1] else NA_integer_)
+    })
+  })
+})) |>
+  left_join(pliegues |> select(modelo, balanceo, metodo, pliegue, auc, auc_interna, t_por_eval,
+                               t_busqueda),
+            by = c("modelo", "balanceo", "metodo", "pliegue"))
+
+eficiencia <- bloques |>
+  group_by(metodo) |>
+  summarise(t6 = mean(t6), t12 = mean(t12), t24 = mean(t24), area = mean(area),
+            llega = mean(llega), evals = median(evals, na.rm = TRUE), auc_externa = mean(auc),
+            auc_interna = mean(auc_interna), t_eval = mean(t_por_eval),
+            t_total = sum(t_busqueda)) |>
+  slice(match(OPTIMIZADORES, metodo))
 ef <- function(o, col) eficiencia[[col]][eficiencia$metodo == o]
 
 eficiencia |>
@@ -357,9 +462,20 @@ eficiencia |>
   tabla_resultado("Eficiencia de los optimizadores (120 bloques)", full_width = TRUE) |>
   add_header_above(c(" " = 1, "AUC interna" = 3, " " = 7))
 
-wil <- leer("wilcoxon_optimizadores.csv")
+ref_random <- bloques |> filter(metodo == "random")
+wil <- map_dfr(c("grid", "bayesiano", "genetico"), function(o) {
+  otro <- bloques |> filter(metodo == o) |>
+    inner_join(ref_random, by = c("modelo", "balanceo", "pliegue"), suffix = c("", "_r"))
+  map_dfr(c("t12", "t24", "area", "auc"), function(col) {
+    dif <- otro[[col]] - otro[[paste0(col, "_r")]]
+    tibble(metodo = o, medida = col, dif_media = mean(dif),
+           p = suppressWarnings(wilcox.test(dif, exact = FALSE)$p.value))
+  })
+}) |>
+  mutate(p_holm = p.adjust(p, "holm"))
+
 wil |>
-  mutate(celda = sprintf("%s (p Holm = %s)", num(dif_media, 4), num(p_holm, 3)),
+  mutate(celda = sprintf("%s (p Holm %s)", signo(dif_media), p_txt(p_holm)),
          medida = factor(medida, levels = c("t12", "t24", "area", "auc"),
                          labels = c("Δ AUC interna t = 12", "Δ AUC interna t = 24",
                                     "Δ área anytime", "Δ AUC externa")),
@@ -370,25 +486,45 @@ wil |>
 w <- function(o, med, col = "dif_media") wil[[col]][wil$metodo == o & wil$medida == med]
 ```
 
-Con las 24 evaluaciones completas los cuatro métodos llegan a una AUC interna casi idéntica (`r num(min(eficiencia$t24), 4)`–`r num(max(eficiencia$t24), 4)`), pero no llegan igual de rápido:
+```{r valores-eficiencia-mod, include = FALSE}
+orden_area <- eficiencia |> arrange(desc(area))
+orden_ext  <- eficiencia |> arrange(desc(auc_externa))
+mas_rapido <- orden_area$metodo[1]
+optimismo <- eficiencia |> mutate(o = auc_interna - auc_externa) |> arrange(desc(o))
+sig <- function(o, med) w(o, med, "p_holm") < 0.05
+frase_frente <- function(o, med, que) {
+  d <- w(o, med); p <- w(o, med, "p_holm")
+  sprintf("%s de %s en %s (%s, $p_\\text{Holm} %s$)",
+          if (d > 0) "una ventaja" else "una desventaja", num(abs(d), 4), que,
+          if (p < 0.05) "significativa" else "no significativa", p_tex(p))
+}
+```
 
-- **TPE es el más eficiente por unidad de presupuesto.** Tras 6 evaluaciones ya tiene una AUC interna de `r num(ef("bayesiano", "t6"), 4)`, más que Random Search tras 12 (`r num(ef("random", "t12"), 4)`); tiene el área *anytime* más alta, alcanza la mejor solución del bloque en el `r pct(ef("bayesiano", "llega"))` de los casos y necesita una mediana de `r num(ef("bayesiano", "evals"), 0)` evaluaciones para hacerlo. Las diferencias frente a Random Search en $t = 12$, $t = 24$ y en el área son pequeñas (+0,001) pero sistemáticas: aparecen en casi todos los bloques y son significativas tras el ajuste de Holm ($p < 0{,}001$). Las primeras ocho evaluaciones de TPE son aleatorias; a partir de ahí el sustituto concentra la búsqueda en la región buena, como muestra el historial de abajo.
-- **Grid Search** depende del orden de la rejilla: empieza por la esquina de mayor regularización (en la logística, $C = 0{,}001$ con L1, que anula todos los coeficientes y da AUC 0,5), de ahí su área *anytime* significativamente menor (`r num(w("grid", "area"), 4)`). Al final llega a una AUC interna similar porque, con 24 puntos en 2–4 dimensiones, la rejilla cubre bien los espacios de la logística y de Random Forest.
-- **Random Search** es la línea base: avanza de forma regular pero es el que menos veces alcanza el mejor del bloque (`r pct(ef("random", "llega"))`), sobre todo en Random Forest.
-- **El algoritmo genético encuentra soluciones internas tan buenas como TPE** (`r pct(ef("genetico", "llega"))` de bloques al mejor), pero es el único con un **optimismo** apreciable: su AUC interna supera a la externa en `r num(ef("genetico", "auc_interna") - ef("genetico", "auc_externa"), 4)`, frente a menos de 0,001 en los demás. El resultado es la peor AUC externa de los cuatro (`r num(ef("genetico", "auc_externa"), 4)`), significativamente menor que la de Random Search (`r num(w("genetico", "auc"), 4)`, $p_\text{Holm} =$ `r num(w("genetico", "auc", "p_holm"), 3)`).
+Con las 24 evaluaciones completas los cuatro métodos llegan a una AUC interna parecida (`r num(min(eficiencia$t24), 4)`–`r num(max(eficiencia$t24), 4)`), pero no llegan igual de rápido ni generalizan igual:
 
-La explicación del último punto está en el bucle interno: el genético explota agresivamente las configuraciones que mejor puntúan en **esos tres pliegues internos concretos**, y con unos 200 pacientes por pliegue esa ventaja es en buena parte ruido. Una búsqueda más eficiente sobre una métrica ruidosa sobreajusta la métrica. El costo por evaluación es el mismo en los cuatro métodos (≈ `r num(mean(eficiencia$t_eval), 2)` s): la lógica de TPE y del genético es despreciable frente al ajuste de los modelos, así que su ventaja en calidad por evaluación es también ventaja por segundo.
+- `r nombre(mas_rapido)` es el más eficiente por unidad de presupuesto: tiene el área *anytime* más alta (`r num(ef(mas_rapido, "area"), 4)`, frente a `r num(ef("random", "area"), 4)` de Random Search), tras 6 evaluaciones ya tiene una AUC interna de `r num(ef(mas_rapido, "t6"), 4)` y alcanza la mejor solución del bloque en el `r pct(ef(mas_rapido, "llega"))` de los casos`r if (ef(mas_rapido, "evals") == 1) "; en al menos la mitad de esos bloques le basta la primera evaluación, una muestra de lo plana que es la AUC interna en estos espacios de búsqueda" else paste0(" (cuando la alcanza, con una mediana de ", evaluaciones(ef(mas_rapido, "evals")), ")")`.
+- Optimizador bayesiano (GP): frente a Random Search tiene `r frase_frente("bayesiano", "area", "el área anytime")`. Sus 8 primeras evaluaciones son aleatorias, así que hasta $t = 8$ se comporta como Random Search; a partir de ahí el proceso gaussiano concentra la búsqueda. Con las 24 evaluaciones completas tiene `r frase_frente("bayesiano", "t24", "la AUC interna")` y alcanza la mejor solución del bloque en el `r pct(ef("bayesiano", "llega"))` de los casos, pero en AUC externa queda en `r num(ef("bayesiano", "auc_externa"), 4)`.
+- Grid Search depende del orden de la rejilla: `expand.grid` hace variar más rápido la primera dimensión, así que en la logística recorre $\lambda$ de la regularización más débil a la más fuerte alternando L1 y L2 (con L1 y $\lambda = 1$ todos los coeficientes valen cero y la AUC es 0,5). Frente a Random Search tiene `r frase_frente("grid", "area", "el área anytime")`. Al final llega a una AUC interna similar porque, con 24 puntos en 2–4 dimensiones, la rejilla cubre bien los espacios de la logística y de Random Forest.
+- Algoritmo genético (GA): frente a Random Search tiene `r frase_frente("genetico", "area", "el área anytime")` y `r frase_frente("genetico", "auc", "la AUC externa")`; alcanza la mejor solución del bloque en el `r pct(ef("genetico", "llega"))` de los casos.
+
+El método con más optimismo (AUC interna menos externa) es `r nombre(optimismo$metodo[1])` (`r num(optimismo$auc_interna[1] - optimismo$auc_externa[1], 4)`, frente a `r num(min(optimismo$auc_interna - optimismo$auc_externa), 4)` del que menos): una búsqueda que explota con fuerza las configuraciones que mejor puntúan en esos tres pliegues internos concretos, con unos 200 pacientes por pliegue, sobreajusta en parte el ruido de la propia métrica. La mejor AUC externa es la de `r nombre(orden_ext$metodo[1])` (`r num(orden_ext$auc_externa[1], 4)`) y la peor la de `r nombre(orden_ext$metodo[4])` (`r num(orden_ext$auc_externa[4], 4)`): una diferencia de `r num(orden_ext$auc_externa[1] - orden_ext$auc_externa[4], 4)`, muy inferior a la variación entre pliegues.
+
+El costo por evaluación no es el mismo en los cuatro métodos: Grid, Random y el genético apenas añaden nada al ajuste de los modelos (`r num(ef("random", "t_eval"), 2)` s por evaluación en Random Search), mientras que el optimizador bayesiano ajusta un proceso gaussiano y maximiza la Mejora Esperada antes de cada evaluación nueva (`r num(ef("bayesiano", "t_eval"), 2)` s por evaluación). Con modelos que se ajustan en milisegundos, ese costo fijo domina: la ventaja por evaluación del bayesiano no es una ventaja por segundo en este problema. Sí lo sería con modelos cuyo ajuste costara minutos.
 
 ### Historial de una búsqueda bayesiana
 
-El gráfico de historial (*history plot*) de Optuna muestra cada evaluación y el mejor valor acumulado. Se compara con Random Search en el mismo bloque (XGBoost sin balanceo, primer pliegue externo): las 8 primeras evaluaciones de TPE son aleatorias, y a partir de ahí el sustituto concentra la búsqueda en la región buena.
+El gráfico de historial muestra cada evaluación y el mejor valor acumulado. Se compara con Random Search en el mismo bloque (XGBoost sin balanceo, primer pliegue externo): las 8 primeras evaluaciones del optimizador bayesiano son aleatorias, y a partir de ahí la Mejora Esperada sobre el proceso gaussiano decide dónde evaluar.
 
 ```{r historial-mod, fig.width = 11, fig.height = 3.8, class.source = "fold-hide"}
-historial <- leer("historial_xgb_pliegue1.csv") |>
+historial <- map_dfr(c("random", "bayesiano"), function(o) {
+  h <- historiales[[id_combo("xgboost", "ninguno", o)]][[1]]
+  tibble(metodo = o, t = seq_along(h), auc = h, mejor = cummax(h))
+}) |>
   mutate(Optimizador = factor(nombre(metodo), levels = nombre(c("random", "bayesiano"))))
 
 ggplot(historial, aes(t)) +
-  geom_rect(data = tibble(Optimizador = factor("Bayesiano (TPE)", levels = levels(historial$Optimizador))),
+  geom_rect(data = tibble(Optimizador = factor(nombre("bayesiano"),
+                                               levels = levels(historial$Optimizador))),
             aes(xmin = 0.5, xmax = 8.5, ymin = -Inf, ymax = Inf), inherit.aes = FALSE,
             fill = "#eef2f7") +
   geom_step(aes(y = mejor), color = TINTA, linewidth = 0.8) +
@@ -396,7 +532,8 @@ ggplot(historial, aes(t)) +
   facet_wrap(~ Optimizador, nrow = 1) +
   scale_color_manual(values = COLOR_OPTIMIZADOR, guide = "none") +
   labs(title = "XGBoost sin balanceo · pliegue 1: evaluaciones (puntos) y mejor hasta t (línea)",
-       subtitle = "Zona sombreada: arranque aleatorio de TPE", x = "Evaluación t", y = "AUC interna")
+       subtitle = "Zona sombreada: arranque aleatorio del optimizador bayesiano",
+       x = "Evaluación t", y = "AUC interna")
 ```
 
 ### Convergencia y diversidad del algoritmo genético
@@ -404,24 +541,37 @@ ggplot(historial, aes(t)) +
 En cada generación se registra la mejor aptitud, la aptitud media de la población y su diversidad genética. Una diversidad que cae a cero mientras la media alcanza al mejor indica convergencia prematura: la población se ha vuelto una copia del mismo individuo y el cruce deja de explorar.
 
 ```{r genetico-mod, fig.width = 11, fig.height = 3.8, class.source = "fold-hide"}
-gen <- leer("genetico_generaciones.csv") |>
+G_MAX <- 8
+gen <- geneticos |>
+  filter(generacion <= G_MAX) |>
+  group_by(modelo, generacion) |>
+  summarise(across(c(mejor, media, diversidad), mean), .groups = "drop") |>
   mutate(Modelo = factor(nombre(modelo), levels = nombre(MODELOS)))
 
 p_div <- ggplot(gen, aes(generacion, diversidad, color = Modelo)) +
   geom_line(linewidth = 1) + geom_point(size = 2) +
   scale_color_manual(values = COLOR_MODELO, name = NULL) +
-  scale_x_continuous(breaks = 0:8) +
+  scale_x_continuous(breaks = 0:G_MAX) +
   labs(title = "Diversidad genética de la población", x = "Generación",
        y = "Distancia media entre genomas\n(normalizada)")
 p_brecha <- ggplot(gen, aes(generacion, pmax(mejor - media, 1e-5), color = Modelo)) +
   geom_line(linewidth = 1) + geom_point(size = 2) +
   scale_color_manual(values = COLOR_MODELO, name = NULL) +
-  scale_x_continuous(breaks = 0:8) + scale_y_log10() +
+  scale_x_continuous(breaks = 0:G_MAX) + scale_y_log10() +
   labs(title = "Brecha entre el mejor individuo y la media", x = "Generación",
        y = "AUC mejor − AUC media\n(escala log)")
 p_div + p_brecha + plot_layout(guides = "collect") & theme(legend.position = "bottom")
 
-corridas <- leer("genetico_corridas.csv")
+corridas <- geneticos |>
+  group_by(modelo, corrida) |>
+  summarise(generaciones = max(generacion), div_inicial = first(diversidad),
+            div_final = last(diversidad), .groups = "drop") |>
+  mutate(colapso = div_final < 0.05) |>
+  group_by(modelo) |>
+  summarise(generaciones_media = mean(generaciones), generaciones_max = max(generaciones),
+            div_inicial = mean(div_inicial), div_final = mean(div_final),
+            pct_colapso = 100 * mean(colapso)) |>
+  slice(match(MODELOS, modelo))
 corridas |>
   transmute(Modelo = nombre(modelo), `Generaciones necesarias (media)` = num(generaciones_media, 1),
             `Generaciones (máx.)` = generaciones_max, `Diversidad inicial` = num(div_inicial, 3),
@@ -430,17 +580,31 @@ corridas |>
   tabla_resultado("Convergencia del algoritmo genético por modelo", align = c("l", rep("r", 5)))
 ```
 
-La diversidad cae de ≈ 0,4 a menos de 0,1 en tres generaciones, y en ese mismo tiempo la brecha entre el mejor individuo y la media de la población se cierra a menos de 0,001 de AUC: la población converge muy pronto. En el `r num(min(corridas$pct_colapso), 0)`–`r num(max(corridas$pct_colapso), 0)` % de las corridas la diversidad final queda por debajo de 0,05, lo que es **convergencia prematura**. Una consecuencia visible es que la población empieza a producir hijos que se decodifican a configuraciones ya evaluadas; como el caché no les cobra presupuesto, el algoritmo necesita en promedio entre `r num(min(corridas$generaciones_media), 0)` y `r num(max(corridas$generaciones_media), 0)` generaciones (hasta `r max(corridas$generaciones_max)` en la logística, cuyo espacio de dos dimensiones se agota rápido) para completar las 24 evaluaciones nuevas.
+```{r valores-genetico-mod, include = FALSE}
+div_g <- function(g) gen |> filter(generacion == g) |> pull(diversidad) |> mean()
+brecha_g3 <- gen |> filter(generacion == 3) |> summarise(b = mean(mejor - media)) |> pull(b)
+```
 
-Con μ = 6 la población es demasiado pequeña para mantener diversidad con selección por torneo y esquema elitista $(\mu + \lambda)$; la presión selectiva es alta para el tamaño del problema. Una población mayor (μ ≥ 15), una mutación más fuerte o un esquema $(\mu, \lambda)$ no elitista mantendrían más exploración, pero con 24 evaluaciones una población grande no alcanzaría a evolucionar. En presupuestos tan pequeños, el genético está en desventaja estructural frente a un método basado en un modelo sustituto.
+La diversidad media cae de `r num(div_g(0), 2)` en la población inicial a `r num(div_g(3), 2)` en la tercera generación, y la brecha entre el mejor individuo y la media de la población es de `r num(brecha_g3, 4)` de AUC en ese punto: la población converge muy pronto. En el `r num(min(corridas$pct_colapso), 0)`–`r num(max(corridas$pct_colapso), 0)` % de las corridas la diversidad final queda por debajo de 0,05, lo que es convergencia prematura. Una consecuencia visible es que la población empieza a producir hijos que se decodifican a configuraciones ya evaluadas; como la memoria no les cobra presupuesto, el algoritmo necesita en promedio entre `r num(min(corridas$generaciones_media), 0)` y `r num(max(corridas$generaciones_media), 0)` generaciones (hasta `r max(corridas$generaciones_max)`) para completar las 24 evaluaciones nuevas. El elitismo y la selección proporcional hacen que el mejor individuo se copie muchas veces, y el cruce aritmético entre copias casi iguales produce hijos casi iguales; solo la mutación uniforme (probabilidad 0,1) reintroduce variedad.
+
+Con 6 individuos la población es demasiado pequeña para mantener diversidad; la presión selectiva es alta para el tamaño del problema. Una población mayor (los 50 individuos por defecto de `GA`), una mutación más fuerte o sin elitismo mantendrían más exploración, pero con 24 evaluaciones una población grande no alcanzaría a evolucionar. En presupuestos tan pequeños, el genético está en desventaja estructural frente a un método basado en un modelo sustituto.
 
 ### Optimización multi-fidelidad: *Successive Halving*
 
-Como técnica adicional de eficiencia se probó *Successive Halving* sobre XGBoost (sin balanceo). La **fidelidad** es el número de árboles: es la medida natural del costo de un modelo de *boosting* y, para tasas de aprendizaje razonables, el orden de las configuraciones con pocos árboles predice bien su orden con muchos. Se parte de 81 candidatos con 15 árboles y en cada ronda se conserva el mejor tercio con el triple de árboles (**factor de reducción 3**): 81 → 27 → 9 → 3 candidatos con 15 → 45 → 135 → 405 árboles. Ambos métodos se evalúan con la misma validación anidada de 10 × 3 pliegues.
+Como técnica adicional de eficiencia se probó *Successive Halving* sobre XGBoost (sin balanceo). La fidelidad es el número de árboles: es la medida natural del costo de un modelo de *boosting* y, para tasas de aprendizaje razonables, el orden de las configuraciones con pocos árboles predice bien su orden con muchos. Se parte de 81 candidatos con 15 árboles y en cada ronda se conserva el mejor tercio con el triple de árboles (factor de reducción 3): 81 → 27 → 9 → 3 candidatos con 15 → 45 → 135 → 405 árboles. El algoritmo se escribe directamente (`successive_halving()` en `R/analisis.R`): son unas pocas líneas sobre la misma evaluación interna que usan los demás métodos. Ambos métodos se evalúan con la misma validación anidada de 10 × 3 pliegues.
 
 ```{r halving-mod, class.source = "fold-hide"}
-halving <- leer("halving.csv")
+halving_pl <- en_cache("halving", function() comparar_halving(X_train, y_train), RECALCULAR)
+halving <- halving_pl |>
+  group_by(metodo) |>
+  summarise(candidatos = mean(candidatos), arboles = mean(arboles), t = mean(t),
+            auc_interna = mean(auc_interna), auc_externa_de = sd(auc_externa),
+            auc_externa = mean(auc_externa))
 hv <- function(m, col) halving[[col]][halving$metodo == m]
+d_h <- halving_pl |> select(metodo, pliegue, auc_externa) |>
+  pivot_wider(names_from = metodo, values_from = auc_externa)
+halving_p <- wilcox.test(d_h$`Successive Halving`, d_h$`Random Search`, paired = TRUE,
+                         exact = FALSE)$p.value
 
 halving |>
   transmute(`Método` = metodo, `Configuraciones evaluadas` = num(candidatos, 0),
@@ -451,25 +615,27 @@ halving |>
                   align = c("l", rep("r", 5)))
 ```
 
-*Successive Halving* **no mejoró** a Random Search en este problema: evaluó cinco veces más configuraciones con un número parecido de árboles (`r num(hv("Successive Halving", "arboles"), 0)` frente a `r num(hv("Random Search", "arboles"), 0)`), pero tardó más por búsqueda (`r num(hv("Successive Halving", "t"), 1)` s frente a `r num(hv("Random Search", "t"), 1)` s) y obtuvo una AUC externa algo menor (`r num(hv("Successive Halving", "auc_externa"), 3)` frente a `r num(hv("Random Search", "auc_externa"), 3)`; diferencia no significativa según Wilcoxon pareado, $p =$ `r num(esc$halving_p, 3)`). Hay dos razones. La primera es de costo: con 400 pacientes por pliegue interno un árbol cuesta microsegundos, de modo que el tiempo lo dominan los costos fijos de cada ajuste (preparar los datos, crear el modelo, la validación cruzada), y Halving hace 120 ajustes por pliegue en lugar de 24; ahorrar árboles no ahorra tiempo. La segunda es de fidelidad: con *learning rates* bajos, 15 árboles son un modelo muy incompleto y su ranking predice mal el de 405, así que la primera ronda descarta configuraciones que habrían sido buenas. Los métodos multi-fidelidad rinden cuando cada evaluación completa es cara (redes neuronales, datos de millones de filas); aquí no lo es.
+*Successive Halving* `r if (hv("Successive Halving", "auc_externa") > hv("Random Search", "auc_externa")) "obtuvo una AUC externa algo mayor que" else "no mejoró a"` Random Search en este problema`r if (halving_p >= 0.05) ", aunque la diferencia no es significativa" else ""`: evaluó más del triple de configuraciones (81 frente a 24), con `r num(hv("Successive Halving", "arboles"), 0)` árboles por pliegue interno frente a `r num(hv("Random Search", "arboles"), 0)`, tardó `r num(hv("Successive Halving", "t"), 1)` s por búsqueda frente a `r num(hv("Random Search", "t"), 1)` s, y su AUC externa fue de `r num(hv("Successive Halving", "auc_externa"), 3)` frente a `r num(hv("Random Search", "auc_externa"), 3)` (Wilcoxon pareado sobre los 10 pliegues, $p =$ `r num(halving_p, 3)`). `r if (hv("Successive Halving", "t") > hv("Random Search", "t")) "Es decir, la técnica pensada para ahorrar cómputo tardó más. " else ""`Hay dos razones para que la multi-fidelidad no compense aquí. La primera es de costo: con 400 pacientes por pliegue interno un árbol cuesta microsegundos, de modo que el tiempo lo dominan los costos fijos de cada ajuste (preparar los datos, crear el modelo, la validación cruzada), y Halving hace 120 evaluaciones por búsqueda en lugar de 24; ahorrar árboles no ahorra tiempo. La segunda es de fidelidad: con *learning rates* bajos, 15 árboles son un modelo muy incompleto y su ranking puede predecir mal el de 405, así que la primera ronda corre el riesgo de descartar configuraciones que habrían sido buenas. Los métodos multi-fidelidad rinden cuando cada evaluación completa es cara (redes neuronales, datos de millones de filas); aquí no lo es.
 
 ## Selección de los modelos finales
 
-Para cada familia se elige la combinación de balanceo y optimizador con mayor AUC media en el bucle externo. Después, ese optimizador se ejecuta **una vez más sobre los 671 pacientes de entrenamiento completos** para fijar los hiperparámetros definitivos, y el pipeline resultante se ajusta con todos ellos. La AUC del bucle externo es la estimación de generalización del *procedimiento* (balanceo + optimizador + modelo); el modelo final es el que ese procedimiento produce con todos los datos disponibles.
+Para cada familia se elige la combinación de balanceo y optimizador con mayor AUC media en el bucle externo. Después, ese optimizador se ejecuta una vez más sobre los 671 pacientes de entrenamiento completos para fijar los hiperparámetros definitivos, y el pipeline resultante se ajusta con todos ellos. La AUC del bucle externo es la estimación de generalización del *procedimiento* (balanceo + optimizador + modelo); el modelo final es el que ese procedimiento produce con todos los datos disponibles.
 
 ```{r finales-mod, class.source = "fold-hide"}
-finales <- leer("finales.csv")
-hiper <- set_names(map(finales$hiperparametros, fromJSON), finales$modelo)
+seleccion <- seleccionar(resumen)
+finales <- en_cache("modelos_finales", function() entrenar_finales(seleccion, X_train, y_train),
+                    RECALCULAR)
+mejor <- seleccion$modelo[which.max(seleccion$auc_media)]
+
 formatear_hiper <- function(h) {
   paste(map2_chr(names(h), h, function(k, v) {
-    paste(k, "=", if (is.numeric(v) && v != round(v)) num(v, 4) else as.character(v))
+    paste0("`", k, "` = ", if (is.numeric(v) && v != round(v)) num(v, 4) else as.character(v))
   }), collapse = "; ")
 }
-
-finales |>
+seleccion |>
   transmute(Modelo = nombre(modelo), Balanceo = nombre(balanceo), Optimizador = nombre(metodo),
             `AUC externa (10 pliegues)` = paste(num(auc_media, 4), "±", num(auc_de, 4)),
-            `Hiperparámetros finales` = map_chr(hiper, formatear_hiper)) |>
+            `Hiperparámetros finales` = map_chr(modelo, ~ formatear_hiper(finales[[.x]]$params))) |>
   tabla_resultado("Modelos finales y sus hiperparámetros", full_width = TRUE)
 ```
 
@@ -481,20 +647,21 @@ Notación: $n$ pacientes, $p$ predictoras, $T$ árboles, $d$ profundidad máxima
 
 | Modelo | Entrenamiento | Inferencia (por paciente) | Optimización aplicada |
 |---|---|---|---|
-| Regresión logística (`liblinear`) | $O(I \cdot n \cdot p)$ | $O(p)$ | *Solver* de descenso por coordenadas, lineal en $n$ y $p$ por iteración |
-| Random Forest | $O(T \cdot m \cdot n \log n)$, con $m$ = variables por división | $O(T \cdot d)$ | Submuestreo de variables ($m < p$), paralelización entre árboles y pliegues |
+| Regresión logística (`glmnet`) | $O(I \cdot n \cdot p)$ | $O(p)$ | Descenso por coordenadas, lineal en $n$ y $p$ por iteración |
+| Random Forest (`ranger`) | $O(T \cdot m \cdot n \log n)$, con $m$ = variables por división | $O(T \cdot d)$ | Submuestreo de variables ($m < p$), implementación en C++, paralelización entre pliegues |
 | XGBoost exacto | $O(T \cdot d \cdot p \cdot n \log n)$ | $O(T \cdot d)$ | — |
 | XGBoost `hist` | $O(n \cdot p)$ una vez + $O(T \cdot d \cdot (n \cdot p + B \cdot p))$ | $O(T \cdot d)$ | Histogramas en lugar de ordenar, *early stopping* |
 
 La teoría se contrasta con el tiempo medido variando $n$ y $p$ de forma controlada: se remuestrean pacientes del entrenamiento (con reemplazo) para obtener $n$ entre 200 y 25 600, y se añaden columnas binarias de ruido para llevar $p$ de 23 a 736. La pendiente de $\log t$ frente a $\log n$ (o $\log p$) en el tramo de los cuatro tamaños mayores es el exponente empírico de escalamiento: si el entrenamiento es $O(n)$, la pendiente debería acercarse a 1; si es $O(n \log n)$, a algo ligeramente mayor que 1. Con pocos datos domina el costo fijo de cada ajuste y la pendiente es menor.
 
 ```{r escalamiento-mod, fig.width = 11, fig.height = 4.2, class.source = "fold-hide"}
-escalamiento <- leer("escalamiento.csv")
-pendientes   <- leer("escalamiento_pendientes.csv")
+escalamiento_t <- en_cache("escalamiento", function() escalamiento(finales, X_train, y_train),
+                           RECALCULAR)
+pendientes <- pendientes_escalamiento(escalamiento_t)
 pend <- function(m, eje) pendientes$pendiente[pendientes$modelo == m & pendientes$eje == eje]
 
 grafico_escala <- function(e, titulo, etiqueta_x) {
-  d <- escalamiento |>
+  d <- escalamiento_t |>
     filter(eje == e) |>
     left_join(pendientes, by = c("modelo", "eje")) |>
     mutate(Modelo = factor(sprintf("%s (pendiente %s)", nombre(modelo), num(pendiente)),
@@ -512,23 +679,23 @@ grafico_escala <- function(e, titulo, etiqueta_x) {
 grafico_escala("n", "Escalamiento con el número de pacientes", "Pacientes n (escala log)") +
   grafico_escala("p", "Escalamiento con el número de predictoras", "Predictoras p (escala log)")
 
-t_real <- escalamiento |> filter(eje == "p", valor == 23)
+t_real <- escalamiento_t |> filter(eje == "p", valor == 23)
 ```
 
-Las pendientes empíricas son coherentes con la teoría una vez se tiene en cuenta el costo fijo de cada ajuste:
+Las pendientes empíricas se leen a la luz del costo fijo de cada ajuste:
 
-- **Regresión logística:** pendiente `r num(pend("logistica", "n"))` en $n$ y `r num(pend("logistica", "p"))` en $p$, prácticamente lineal, como predice $O(I \cdot n \cdot p)$ del descenso por coordenadas.
-- **Random Forest:** pendientes de `r num(pend("random_forest", "n"))` en $n$ y `r num(pend("random_forest", "p"))` en $p$. Con `max_depth = 10` el costo por árbol crece en proporción a $n$, sin el factor $\log n$ de los árboles sin límite, pero los 200 árboles tienen un costo fijo de unos `r num(min(escalamiento$t[escalamiento$modelo == "random_forest"]), 2)` s que domina mientras $n$ es pequeño y aplana la pendiente.
-- **XGBoost (`hist`):** pendiente `r num(pend("xgboost", "n"))` en $n$ y `r num(pend("xgboost", "p"))` en $p$, las más bajas de los tres. Con árboles de profundidad 2 cada ronda es muy barata, así que el costo fijo de construir el modelo y los histogramas pesa más que el tamaño de los datos; en $p$ la pendiente es todavía menor porque `colsample_bytree` solo usa parte de las columnas en cada árbol.
+- Regresión logística (`glmnet`): pendiente `r num(pend("logistica", "n"))` en $n$ y `r num(pend("logistica", "p"))` en $p$. El descenso por coordenadas es $O(I \cdot n \cdot p)$; con un solo valor de $\lambda$ y pocos datos el costo fijo de la llamada pesa mucho, y la pendiente solo se acerca a 1 en los tamaños grandes.
+- Random Forest (`ranger`): pendientes de `r num(pend("random_forest", "n"))` en $n$ y `r num(pend("random_forest", "p"))` en $p$. `r if (pend("random_forest", "n") > 1.2) paste0("Una pendiente mayor que 1 en $n$ indica que, además del costo por división, crece el propio árbol: con más pacientes, más nodos superan el mínimo de ", finales$random_forest$params$min.bucket, " pacientes por hoja y siguen dividiéndose hasta el límite de profundidad (\x60max.depth\x60 = ", finales$random_forest$params$max.depth, ").") else paste0("Con profundidad limitada (\x60max.depth\x60 = ", finales$random_forest$params$max.depth, ") el costo por árbol crece aproximadamente en proporción a $n$.")` `mtry` es una fracción fija de $p$, así que el costo por nodo crece con $p$.
+- XGBoost (`hist`): pendiente `r num(pend("xgboost", "n"))` en $n$ y `r num(pend("xgboost", "p"))` en $p$. Con árboles poco profundos (`max_depth` = `r finales$xgboost$params$max_depth`) cada ronda es barata, así que el costo fijo de construir el modelo y los histogramas pesa más que el tamaño de los datos`r if (!is.null(finales$xgboost$params$colsample_bytree) && finales$xgboost$params$colsample_bytree < 1) "; \x60colsample_bytree\x60 además solo usa parte de las columnas en cada árbol" else ""`.
 
-En el tamaño real del problema ($n = 671$, $p = 23$) los tres modelos se entrenan en menos de `r num(ceiling(10 * max(t_real$t)) / 10, 1)` s; ninguno está cerca de ser un cuello de botella, y lo que encarece el experimento es el número de ajustes (`r num(3 * esc$n_eval_total, 0)`), no el costo de cada uno.
+En el tamaño real del problema ($n = 671$, $p = 23$) los tres modelos se entrenan en menos de `r num(ceiling(10 * max(t_real$t)) / 10, 1)` s; ninguno está cerca de ser un cuello de botella, y lo que encarece el experimento es el número de ajustes (`r num(3 * n_eval_total, 0)`) y el costo de los propios optimizadores, no el de cada modelo.
 
 ### XGBoost: histogramas frente a método exacto, y *early stopping*
 
-El método `exact` ordena los valores de cada variable en cada nodo; `hist` los agrupa una sola vez en $B$ *bins* y busca divisiones sobre los histogramas. Con variables binarias casi no hay valores que agrupar, así que la ganancia de `hist` aparece sobre todo al crecer $n$ y $p$. El *early stopping* detiene el *boosting* cuando la pérdida en un conjunto de validación independiente (20 % del pliegue de entrenamiento, estratificado) deja de mejorar durante 30 rondas.
+El método `exact` ordena los valores de cada variable en cada nodo; `hist` los agrupa una sola vez en $B$ *bins* y busca divisiones sobre los histogramas. Con variables binarias casi no hay valores que agrupar, así que la ganancia de `hist` aparece sobre todo al crecer $n$ y $p$. El *early stopping* (`early_stopping_rounds` de `xgb.train`) detiene el *boosting* cuando la pérdida en un conjunto de validación independiente (20 % del pliegue de entrenamiento, estratificado) deja de mejorar durante 30 rondas.
 
 ```{r xgb-metodos-mod, class.source = "fold-hide"}
-xm <- leer("xgb_metodos.csv") |>
+xm <- en_cache("xgb_metodos", function() xgb_metodos(finales, X_train, y_train), RECALCULAR) |>
   pivot_wider(names_from = metodo, values_from = t) |>
   mutate(aceleracion = exact / hist)
 acel <- function(n_, p_) xm$aceleracion[xm$n == n_ & xm$p == p_]
@@ -539,7 +706,11 @@ xm |>
   tabla_resultado("Tiempo de entrenamiento de XGBoost: método exacto frente a histogramas",
                   align = rep("r", 5))
 
-es_tab <- leer("early_stopping.csv")
+es_tab <- en_cache("early_stopping", function() early_stopping(finales, X_train, y_train),
+                   RECALCULAR) |>
+  group_by(variante) |>
+  summarise(arboles = mean(arboles), tiempo_s = mean(t), auc_media = mean(auc),
+            auc_de = sd(auc))
 es_v <- function(v, col) es_tab[[col]][str_starts(es_tab$variante, v)]
 es_tab |>
   transmute(Variante = variante, `Árboles (media)` = num(arboles, 1),
@@ -549,55 +720,55 @@ es_tab |>
                   align = c("l", "r", "r", "r"))
 ```
 
-El método `hist` es más rápido en los tres escenarios: `r num(acel(671, 23), 1)` veces en los datos reales, `r num(acel(6400, 23), 1)` veces con 6 400 pacientes y `r num(acel(6400, 184), 1)` veces con 6 400 pacientes y 184 predictoras. La ganancia es mayor cuando crece el número de predictoras, porque el método exacto paga el ordenamiento en cada nodo y en cada variable, mientras que `hist` construye los histogramas una sola vez.
+El método `hist` es `r if (all(xm$aceleracion > 1)) "más rápido en los tres escenarios" else "más rápido en los escenarios grandes"`: `r num(acel(671, 23), 1)` veces en los datos reales, `r num(acel(6400, 23), 1)` veces con 6 400 pacientes y `r num(acel(6400, 184), 1)` veces con 6 400 pacientes y 184 predictoras. La ganancia es mayor cuando crecen los datos y, sobre todo, el número de predictoras, porque el método exacto paga el ordenamiento en cada nodo y en cada variable, mientras que `hist` construye los histogramas una sola vez.
 
-El *early stopping* no compensa aquí: el criterio de parada eligió en promedio `r num(es_v("Early", "arboles"), 0)` árboles en lugar de los `r num(es_v("Fijo", "arboles"), 0)` del modelo final, tardó `r num(es_v("Early", "tiempo_s") / es_v("Fijo", "tiempo_s"), 1)` veces más y obtuvo prácticamente la misma AUC (`r num(es_v("Early", "auc_media"), 3)` frente a `r num(es_v("Fijo", "auc_media"), 3)`), porque entrena con el 80 % del pliegue (el 20 % restante se reserva para decidir cuándo parar). El número de árboles ya está optimizado como hiperparámetro dentro de la validación anidada, de modo que el *early stopping* solo duplica esa decisión con menos datos. Sería útil si se fijara un *learning rate* y se dejara libre el número de árboles.
+El *early stopping* no compensa aquí: el criterio de parada eligió en promedio `r num(es_v("Early", "arboles"), 0)` árboles frente a los `r num(es_v("Fijo", "arboles"), 0)` del modelo final, tardó `r num(es_v("Early", "tiempo_s") / es_v("Fijo", "tiempo_s"), 1)` veces más (tiene que evaluar la pérdida de validación en cada ronda) y obtuvo una AUC de `r num(es_v("Early", "auc_media"), 3)` frente a `r num(es_v("Fijo", "auc_media"), 3)`, porque entrena con el 80 % del pliegue (el 20 % restante se reserva para decidir cuándo parar). El número de árboles ya está optimizado como hiperparámetro dentro de la validación anidada, de modo que el *early stopping* solo duplica esa decisión con menos datos. Sería útil si se fijara un *learning rate* y se dejara libre el número de árboles.
 
 ### Paralelización y perfilamiento
 
-El bucle externo es vergonzosamente paralelo: cada pliegue busca y evalúa de forma independiente. La validación anidada lo reparte con `joblib` (*backend* `loky`, procesos separados, que evita el bloqueo global del intérprete), y los modelos internos usan un solo hilo para no sobresuscribir los núcleos. Se mide el tiempo de reloj de una validación anidada completa (Random Search, XGBoost sin balanceo) con 1 y 2 procesos. No hay GPU disponible en el equipo de ejecución, por lo que no se evaluó `device='cuda'` en XGBoost; con 671 pacientes la transferencia de datos a la GPU costaría más que el propio entrenamiento.
+El bucle externo es vergonzosamente paralelo: cada pliegue busca y evalúa de forma independiente. La validación anidada lo reparte con `future.apply::future_lapply` sobre un plan `multisession` (sesiones de R separadas, que funcionan igual en Windows, macOS y Linux), y los modelos usan un solo hilo (`num.threads = 1`, `nthread = 1`) para no sobresuscribir los núcleos. Se mide el tiempo de reloj de una validación anidada completa (Random Search, XGBoost sin balanceo) con 1 y 2 procesos. No hay GPU disponible en el equipo de ejecución; con 671 pacientes la transferencia de datos a la GPU costaría más que el propio entrenamiento.
 
 ```{r paralelo-mod, class.source = "fold-hide"}
-par_tab <- leer("paralelo.csv") |>
+par_tab <- en_cache("paralelo", function() paralelo(X_train, y_train), RECALCULAR) |>
   mutate(aceleracion = t[1] / t, eficiencia = aceleracion / procesos)
 par_tab |>
   transmute(Procesos = procesos, `Tiempo (s)` = num(t, 1), `Aceleración` = num(aceleracion, 2),
             Eficiencia = num(eficiencia, 2)) |>
   tabla_resultado("Validación anidada completa con 1 y 2 procesos", align = rep("r", 4))
 
-# Perfilamiento y desglose medidos en 02_Modelado.ipynb (salidas del notebook;
-# no se guardan en la caché de resultados).
-tibble(
-  `Función` = c("scipy.sparse _argminmax_axis", "numpy argmax (envoltorio)",
-                "numpy.ndarray.argmax", "numpy _wrapfunc"),
-  Llamadas = c("1.584", "821.568", "821.568", "835.186"),
-  `Tiempo propio (s)` = c("7,89", "1,45", "1,34", "0,77"),
-  `Tiempo acumulado (s)` = c("12,05", "3,84", "1,34", "2,60")
-) |>
-  tabla_resultado("cProfile: funciones con más tiempo propio (Random Search, logística + SMOTE-NC, 20,4 s en total)",
-                  align = c("l", "r", "r", "r"))
+perfil <- en_cache("perfil", function() perfilar(X_train, y_train), RECALCULAR)
+perfil$tabla |>
+  transmute(`Función` = sprintf("`%s`", gsub('"', "", funcion)),
+            `Tiempo propio (s)` = num(propio_s, 2), `% del total` = num(propio_pct, 1),
+            `Tiempo acumulado (s)` = num(total_s, 2)) |>
+  tabla_resultado(sprintf("Rprof: funciones con más tiempo propio (Random Search, logística + SMOTE-NC, %s s en total)",
+                          num(perfil$total, 1)), align = c("l", "r", "r", "r"))
 
-desglose <- tibble(
-  `Pipeline final` = c("Regresión Logística · Sin balanceo", "Random Forest · ADASYN",
-                       "XGBoost · Sin balanceo"),
-  `Escalado (ms)` = c(17.5, 12.6, 10.3), `Balanceo (ms)` = c(0.0, 25.4, 0.0),
-  `Modelo (ms)` = c(5.0, 598.4, 431.6)
-)
-desglose |>
-  mutate(across(-1, ~ num(.x, 1))) |>
+desglose_t <- en_cache("desglose", function() desglose(finales, X_train, y_train), RECALCULAR)
+desglose_t |>
+  transmute(`Pipeline final` = paste(nombre(modelo), "·", nombre(balanceo)),
+            `Escalado (ms)` = num(escalado_ms, 1), `Balanceo (ms)` = num(balanceo_ms, 1),
+            `Modelo (ms)` = num(modelo_ms, 1)) |>
   tabla_resultado("Desglose del ajuste de cada pipeline final", align = c("l", "r", "r", "r"))
 ```
 
-La paralelización del bucle externo con dos procesos reduce el tiempo de una validación anidada completa de `r num(par_tab$t[1], 0)` s a `r num(par_tab$t[2], 0)` s: una aceleración de `r num(par_tab$aceleracion[2], 2)` y una eficiencia de `r num(par_tab$eficiencia[2], 2)`. Queda lejos de la aceleración ideal de 2, lo que indica que en el equipo de ejecución los dos procesos no disponían cada uno de un núcleo completo (o compartían memoria y caché); aun así, cada pliegue externo es independiente, de modo que con más núcleos libres la aceleración seguiría creciendo hasta 10 procesos, uno por pliegue.
+```{r valores-paralelo-mod, include = FALSE}
+fila_bal <- desglose_t |> filter(balanceo != "ninguno") |> slice(1)
+fila_lenta <- desglose_t |> slice_max(modelo_ms, n = 1, with_ties = FALSE)
+fila_rapida <- desglose_t |> slice_min(modelo_ms, n = 1, with_ties = FALSE)
+```
 
-El perfilamiento muestra que, en la combinación regresión logística + SMOTE-NC, la mayor parte del tiempo no está en el modelo sino en el balanceo: las funciones que más tiempo propio consumen son `_argminmax_axis` de `scipy.sparse` y `numpy.argmax`, llamadas cientos de miles de veces por SMOTE-NC para decidir, en cada paciente sintético, el valor más frecuente de cada una de las 22 variables nominales entre sus vecinos. Es la razón por la que las combinaciones con SMOTE-NC tardan varias veces más que las demás en la regresión logística. En los pipelines finales, en cambio, el ajuste del modelo domina: `r num(desglose[["Modelo (ms)"]][2], 0)` ms en Random Forest frente a `r num(desglose[["Balanceo (ms)"]][2], 0)` ms de ADASYN y `r num(desglose[["Escalado (ms)"]][2], 0)` ms de escalado.
+La paralelización del bucle externo con dos procesos reduce el tiempo de una validación anidada completa de `r num(par_tab$t[1], 0)` s a `r num(par_tab$t[2], 0)` s: una aceleración de `r num(par_tab$aceleracion[2], 2)` y una eficiencia de `r num(par_tab$eficiencia[2], 2)`. No llega a la aceleración ideal de 2 porque arrancar las sesiones de R, cargar en ellas los paquetes y los módulos del capítulo y enviarles los datos tiene un costo, y los dos procesos compiten por la memoria y la caché; aun así, cada pliegue externo es independiente, de modo que con más núcleos libres la aceleración seguiría creciendo hasta 10 procesos, uno por pliegue.
+
+El perfilamiento con `Rprof` muestra que, en la combinación regresión logística + SMOTE-NC, el tiempo no se va en el modelo (la logística se ajusta en milisegundos) sino en el balanceo: las funciones con más tiempo propio son llamadas a código compilado (`.Call`, el `r num(perfil$tabla$propio_pct[1], 0)` % del total) y operaciones sobre factores y tablas (`unique`, `tabulate`, `factor`), que es el trabajo que hace `themis` para calcular las distancias de Gower entre pacientes y asignar a cada binaria el valor más frecuente entre los vecinos. Es la razón por la que las combinaciones con SMOTE-NC tardan varias veces más que las demás. `r if (nrow(fila_bal)) paste0("En los pipelines finales, en cambio, el ajuste del modelo domina: en ", nombre(fila_bal$modelo), " con ", nombre(fila_bal$balanceo), ", ", num(fila_bal$modelo_ms, 0), " ms de modelo frente a ", num(fila_bal$balanceo_ms, 0), " ms de balanceo y ", num(fila_bal$escalado_ms, 1), " ms de escalado.") else paste0("Los tres pipelines finales no balancean, así que en ellos casi todo el tiempo es el ajuste del modelo: de ", num(fila_rapida$modelo_ms, 1), " ms en ", nombre(fila_rapida$modelo), " a ", num(fila_lenta$modelo_ms, 0), " ms en ", nombre(fila_lenta$modelo), ", frente a menos de 1 ms de escalado.")`
 
 ### Modelo estándar frente a optimizado
 
-La versión **estándar** es cada modelo con los valores por defecto de su librería (logística L2 con $C = 1$ y *solver* `lbfgs`; Random Forest con 100 árboles sin límite de profundidad; XGBoost con 100 árboles, profundidad 6, *learning rate* 0,3 y método exacto). La **optimizada** es el pipeline final. El desempeño se compara con una validación cruzada de 10 pliegues sobre el entrenamiento, para no gastar el conjunto de prueba; la memoria es el pico de asignaciones de Python durante el ajuste (no incluye la memoria interna de C++ de XGBoost) y el tamaño del modelo serializado.
+La versión estándar es cada modelo con los valores por defecto de su función en R: `glm` sin penalización, `ranger` con 500 árboles y `mtry` $= \lfloor\sqrt{p}\rfloor$, y `xgboost` con 100 rondas de profundidad 6 y `eta` 0,3. La optimizada es el pipeline final. El desempeño se compara con una validación cruzada de 10 pliegues sobre el entrenamiento, para no gastar el conjunto de prueba; la memoria es la que R asigna durante el ajuste (`bench::mark`; no incluye la memoria interna de C++ de `ranger` y `xgboost`) y el tamaño es el del modelo serializado.
 
 ```{r estandar-mod, class.source = "fold-hide"}
-est <- leer("estandar_vs_optimizado.csv") |>
+est <- en_cache("estandar_vs_optimizado",
+                function() comparar_estandar(finales, X_train, y_train, X_test), RECALCULAR) |>
   group_by(modelo) |>
   mutate(delta = auc_media - auc_media[version == "Estándar"]) |>
   ungroup()
@@ -607,40 +778,59 @@ est |>
   transmute(Modelo = modelo, `Versión` = version,
             `Entrenamiento (ms)` = num(entrenamiento_ms, 1),
             `Inferencia 168 pac. (ms)` = num(inferencia_ms, 1),
-            `Memoria pico (MB)` = num(memoria_mb, 2), `Tamaño modelo (KB)` = num(tamano_kb, 1),
-            `AUC CV` = str_replace_all(auc_cv, fixed("."), ","),
-            `Δ AUC vs estándar` = num(delta, 4)) |>
+            `Memoria asignada (MB)` = num(memoria_mb, 2), `Tamaño modelo (KB)` = num(tamano_kb, 1),
+            `AUC CV` = paste(num(auc_media, 4), "±", num(auc_de, 4)),
+            `Δ AUC vs estándar` = signo(delta, 4)) |>
   tabla_resultado("Modelo estándar frente a optimizado", align = c("l", "l", rep("r", 6))) |>
   collapse_rows(columns = 1, valign = "top")
 ```
 
-La optimización mejora claramente a los dos modelos de árboles: `r num(ev_("Random Forest", "Optimizado", "delta"), 3)` de AUC en Random Forest (los árboles sin límite de profundidad y con hojas de un paciente sobreajustan) y `r num(ev_("XGBoost", "Optimizado", "delta"), 3)` en XGBoost, cuyos valores por defecto (profundidad 6, *learning rate* 0,3) son demasiado agresivos para 671 pacientes. El Random Forest optimizado tarda más en entrenarse (200 árboles frente a 100) pero ocupa la mitad de memoria serializada (`r num(ev_("Random Forest", "Optimizado", "tamano_kb"), 0)` KB frente a `r num(ev_("Random Forest", "Estándar", "tamano_kb"), 0)` KB), porque sus árboles son más pequeños. En XGBoost el entrenamiento optimizado también es algo más lento (`r num(ev_("XGBoost", "Optimizado", "entrenamiento_ms"), 0)` ms frente a `r num(ev_("XGBoost", "Estándar", "entrenamiento_ms"), 0)` ms) porque usa más árboles, aunque de profundidad 2, y el modelo resultante es más pequeño.
+```{r valores-estandar-mod, include = FALSE}
+d_rl <- ev_("Regresión Logística", "Optimizado", "delta")
+d_rf <- ev_("Random Forest", "Optimizado", "delta")
+d_xgb <- ev_("XGBoost", "Optimizado", "delta")
+```
 
-En la regresión logística la versión optimizada (L1, $C = 0{,}53$) queda **ligeramente por debajo** de la estándar (L2, $C = 1$): `r num(ev_("Regresión Logística", "Optimizado", "delta"), 4)`, una diferencia muy inferior a la desviación entre pliegues (≈ 0,04). Es un recordatorio de que la optimización selecciona con una estimación ruidosa: con 23 predictoras y 671 pacientes la regresión logística apenas necesita regularización, y cualquier valor de $C$ razonable da el mismo resultado. Todos los modelos ocupan menos de 1 MB de memoria Python durante el ajuste y predicen los 168 pacientes de prueba en menos de `r num(ceiling(max(est$inferencia_ms) / 10) * 10, 0)` ms.
+La optimización `r if (d_xgb > 0.005) "mejora con claridad a XGBoost" else "apenas cambia a XGBoost"` (`r signo(d_xgb, 3)` de AUC; sus valores por defecto, profundidad 6 y `eta` 0,3, son demasiado agresivos para 671 pacientes) y `r if (d_rf > 0) "también a Random Forest" else "no mejora a Random Forest"` (`r signo(d_rf, 3)`; `ranger` por defecto ya usa hojas de al menos 10 pacientes en modo probabilidad, una regularización razonable). El Random Forest optimizado tiene 200 árboles frente a 500 y árboles más pequeños: ocupa `r num(ev_("Random Forest", "Optimizado", "tamano_kb"), 0)` KB serializado frente a `r num(ev_("Random Forest", "Estándar", "tamano_kb"), 0)` KB, y se entrena en `r num(ev_("Random Forest", "Optimizado", "entrenamiento_ms"), 0)` ms frente a `r num(ev_("Random Forest", "Estándar", "entrenamiento_ms"), 0)` ms.
+
+En la regresión logística la versión optimizada queda `r if (d_rl < 0) "ligeramente por debajo de" else "a la par de"` la estándar sin penalización (`r signo(d_rl, 4)`), una diferencia muy inferior a la desviación entre pliegues (≈ 0,04). Es un recordatorio de que la optimización selecciona con una estimación ruidosa: con 23 predictoras y 671 pacientes la regresión logística apenas necesita regularización. La versión estándar (`glm`) ocupa además mucho más porque guarda una copia de los datos y de los residuos dentro del objeto (`r num(ev_("Regresión Logística", "Estándar", "tamano_kb"), 0)` KB frente a `r num(ev_("Regresión Logística", "Optimizado", "tamano_kb"), 1)` KB de `glmnet`). Todos los modelos predicen los 168 pacientes de prueba en menos de `r num(ceiling(max(est$inferencia_ms) / 10) * 10, 0)` ms.
 
 ## Evaluación final en el conjunto de prueba
 
-Los tres pipelines finales se aplican, por primera y única vez, a los 168 pacientes de prueba. Las predicciones usan el umbral de 0,5 sobre la probabilidad de GBM; el intervalo de confianza de la AUC es bootstrap BCa (2 000 réplicas remuestreando pacientes).
+Los tres pipelines finales se aplican, por primera y única vez, a los 168 pacientes de prueba. Las predicciones usan el umbral de 0,5 sobre la probabilidad de GBM; el intervalo de confianza de la AUC es bootstrap BCa (`boot`, 2 000 réplicas remuestreando pacientes).
 
 ```{r metricas-test-mod, class.source = "fold-hide"}
-metricas_test <- leer("metricas_test.csv")
+proba_test <- map(set_names(MODELOS), ~ predecir(finales[[.x]]$pipeline, X_test))
+metricas_test <- map_dfr(MODELOS, function(m) {
+  p <- proba_test[[m]]
+  met <- metricas(y_test, p)
+  ic <- ic_bootstrap(function(z) auc_roc(z$y, z$p), data.frame(y = y_test, p = p))
+  pred <- as.integer(p >= 0.5)
+  tibble(Modelo = nombre(m), Accuracy = met[["accuracy"]], Precision = met[["precision"]],
+         `Recall (GBM)` = met[["recall"]],
+         Especificidad = sum(pred == 0 & y_test == 0) / sum(y_test == 0),
+         F1 = met[["f1"]], AUC = met[["auc"]], ic_inf = ic[1], ic_sup = ic[2],
+         Brier = met[["brier"]], FN = sum(pred == 0 & y_test == 1),
+         FP = sum(pred == 1 & y_test == 0))
+})
 mt <- function(m, col) metricas_test[[col]][metricas_test$Modelo == m]
 
 metricas_test |>
-  mutate(across(c(Accuracy, Precision, `Recall (GBM)`, Especificidad, F1, AUC, Brier),
-                ~ num(.x, 3)),
-         `IC 95 % AUC` = str_replace_all(`IC 95 % AUC`, c("\\." = ",", ", " = "; "))) |>
+  mutate(`IC 95 % AUC` = sprintf("[%s; %s]", num(ic_inf, 3), num(ic_sup, 3)),
+         across(c(Accuracy, Precision, `Recall (GBM)`, Especificidad, F1, AUC, Brier),
+                ~ num(.x, 3))) |>
+  select(Modelo, Accuracy, Precision, `Recall (GBM)`, Especificidad, F1, AUC, `IC 95 % AUC`,
+         Brier, FN, FP) |>
   tabla_resultado("Métricas en el conjunto de prueba (n = 168, umbral 0,5)",
                   align = c("l", rep("r", 10)), full_width = TRUE)
 ```
 
 ```{r confusion-mod, fig.width = 11, fig.height = 3.6, class.source = "fold-hide"}
-pred_test <- leer("predicciones_test.csv")
 confusion <- map_dfr(MODELOS, function(m) {
-  tibble(Modelo = nombre(m), real = pred_test$grade,
-         predicho = as.integer(pred_test[[paste0("proba_", m)]] >= 0.5))
+  tibble(Modelo = nombre(m), real = y_test, predicho = as.integer(proba_test[[m]] >= 0.5))
 }) |>
   count(Modelo, real, predicho) |>
+  complete(Modelo, real = 0:1, predicho = 0:1, fill = list(n = 0)) |>
   group_by(Modelo, real) |>
   mutate(prop = n / sum(n)) |>
   ungroup() |>
@@ -661,15 +851,17 @@ ggplot(confusion, aes(predicho, real, fill = prop)) +
 ```
 
 ```{r roc-mod, fig.width = 6, fig.height = 5.4, class.source = "fold-hide"}
-roc <- leer("roc_test.csv") |>
-  mutate(Modelo = factor(sprintf("%s (AUC = %s)", nombre(modelo),
-                                 map_chr(nombre(modelo), ~ num(mt(.x, "AUC"), 3))),
-                         levels = sprintf("%s (AUC = %s)", nombre(MODELOS),
-                                          map_chr(nombre(MODELOS), ~ num(mt(.x, "AUC"), 3)))))
+roc <- map_dfr(MODELOS, function(m) {
+  r <- pROC::roc(y_test, proba_test[[m]], levels = c(0, 1), direction = "<", quiet = TRUE)
+  tibble(modelo = m, fpr = 1 - r$specificities, tpr = r$sensitivities) |> arrange(fpr, tpr)
+})
+etiquetas_roc <- sprintf("%s (AUC = %s)", nombre(MODELOS),
+                         map_chr(nombre(MODELOS), ~ num(mt(.x, "AUC"), 3)))
+roc <- roc |> mutate(Modelo = factor(etiquetas_roc[match(modelo, MODELOS)], levels = etiquetas_roc))
 ggplot(roc, aes(fpr, tpr, color = Modelo)) +
   geom_abline(linetype = "dashed", color = "#9aa5b1") +
   geom_path(linewidth = 1) +
-  scale_color_manual(values = set_names(unname(COLOR_MODELO), levels(roc$Modelo)), name = NULL) +
+  scale_color_manual(values = set_names(unname(COLOR_MODELO), etiquetas_roc), name = NULL) +
   coord_equal() +
   guides(color = guide_legend(ncol = 1)) +
   labs(title = "Curvas ROC en el conjunto de prueba",
@@ -679,23 +871,35 @@ ggplot(roc, aes(fpr, tpr, color = Modelo)) +
 fpr_95 <- roc |> filter(tpr >= 0.95) |> group_by(modelo) |> summarise(fpr = min(fpr))
 ```
 
-En el conjunto de prueba los tres modelos son prácticamente equivalentes: AUC de `r num(mt("Regresión Logística", "AUC"), 3)` (logística), `r num(mt("Random Forest", "AUC"), 3)` (Random Forest) y `r num(mt("XGBoost", "AUC"), 3)` (XGBoost), con intervalos de confianza de unos ±0,04 que se solapan casi por completo. Las AUC en prueba son incluso algo mayores que las del bucle externo (`r num(min(finales$auc_media), 3)`–`r num(max(finales$auc_media), 3)`), una señal de que la validación anidada no sobreestimó el desempeño.
+```{r valores-test-mod, include = FALSE}
+mejor_acc <- metricas_test |> slice_max(Accuracy, n = 1, with_ties = FALSE)
+min_fp <- metricas_test |> slice_min(FP, n = 1, with_ties = FALSE)
+cv_vs_test <- mean(metricas_test$AUC) - mean(seleccion$auc_media)
+```
 
-Con el umbral de 0,5 los modelos detectan entre el `r pct(min(metricas_test[["Recall (GBM)"]]))` y el `r pct(max(metricas_test[["Recall (GBM)"]]))` de los glioblastomas (`r min(metricas_test$FN)` a `r max(metricas_test$FN)` falsos negativos de 70) y clasifican correctamente entre el `r pct(min(metricas_test$Especificidad))` y el `r pct(max(metricas_test$Especificidad))` de los LGG. La regresión logística tiene la mejor accuracy (`r num(mt("Regresión Logística", "Accuracy"), 3)`) y, junto con XGBoost, el menor número de falsos positivos (`r mt("Regresión Logística", "FP")`). Los errores no son simétricos: hay más del doble de falsos positivos que de falsos negativos, lo cual es deseable en este contexto clínico, porque un LGG marcado como sospechoso de GBM lleva a pruebas adicionales, mientras que un GBM clasificado como LGG retrasa un tratamiento urgente. Si se quisiera aún más sensibilidad, bastaría con bajar el umbral, pero el costo crece rápido: según las curvas ROC, llevar el recall al 95 % exige aceptar entre un `r pct(min(fpr_95$fpr))` y un `r pct(max(fpr_95$fpr))` de falsos positivos.
+En el conjunto de prueba los tres modelos son prácticamente equivalentes: AUC de `r num(mt("Regresión Logística", "AUC"), 3)` (logística), `r num(mt("Random Forest", "AUC"), 3)` (Random Forest) y `r num(mt("XGBoost", "AUC"), 3)` (XGBoost), con intervalos de confianza de unos ±`r num(mean(metricas_test$ic_sup - metricas_test$ic_inf) / 2, 2)` que se solapan casi por completo. Las AUC en prueba son `r if (cv_vs_test >= 0) "incluso algo mayores que" else "algo menores que"` las del bucle externo (`r num(min(seleccion$auc_media), 3)`–`r num(max(seleccion$auc_media), 3)`), `r if (cv_vs_test >= -0.01) "una señal de que la validación anidada no sobreestimó el desempeño" else "una diferencia que cabe dentro de la incertidumbre de una muestra de 168 pacientes"`.
+
+Con el umbral de 0,5 los modelos detectan entre el `r pct(min(metricas_test[["Recall (GBM)"]]))` y el `r pct(max(metricas_test[["Recall (GBM)"]]))` de los glioblastomas (`r min(metricas_test$FN)` a `r max(metricas_test$FN)` falsos negativos de 70) y clasifican correctamente entre el `r pct(min(metricas_test$Especificidad))` y el `r pct(max(metricas_test$Especificidad))` de los LGG. `r mejor_acc$Modelo` tiene la mejor accuracy (`r num(mejor_acc$Accuracy, 3)`) y `r if (min_fp$Modelo == mejor_acc$Modelo) "también" else min_fp$Modelo` el menor número de falsos positivos (`r min_fp$FP`). Los errores no son simétricos: hay más falsos positivos que falsos negativos (`r sum(metricas_test$FP)` frente a `r sum(metricas_test$FN)` sumando los tres modelos), lo cual es deseable en este contexto clínico, porque un LGG marcado como sospechoso de GBM lleva a pruebas adicionales, mientras que un GBM clasificado como LGG retrasa un tratamiento urgente. Si se quisiera aún más sensibilidad, bastaría con bajar el umbral, pero el costo crece rápido: según las curvas ROC, llevar el recall al 95 % exige aceptar entre un `r pct(min(fpr_95$fpr))` y un `r pct(max(fpr_95$fpr))` de falsos positivos.
 
 ## Calibración de probabilidades
 
-Una AUC alta solo garantiza que el modelo **ordena** bien a los pacientes; no que una probabilidad de 0,8 signifique que 8 de cada 10 de esos pacientes tienen GBM. Si el modelo se usara para apoyar decisiones clínicas, la probabilidad misma importa. La calibración se evalúa con:
+Una AUC alta solo garantiza que el modelo ordena bien a los pacientes; no que una probabilidad de 0,8 signifique que 8 de cada 10 de esos pacientes tienen GBM. Si el modelo se usara para apoyar decisiones clínicas, la probabilidad misma importa. La calibración se evalúa con:
 
-- el **diagrama de confiabilidad** (probabilidad predicha media frente a frecuencia observada de GBM en *bins* de igual ancho);
-- el **Brier score**, error cuadrático medio entre probabilidad y desenlace, que combina calibración y discriminación;
-- el **ECE** (*Expected Calibration Error*), promedio ponderado de la distancia entre confianza y frecuencia observada.
+- el diagrama de confiabilidad (probabilidad predicha media frente a frecuencia observada de GBM en *bins* de igual ancho);
+- el Brier score, error cuadrático medio entre probabilidad y desenlace, que combina calibración y discriminación;
+- el ECE (*Expected Calibration Error*), promedio ponderado de la distancia entre confianza y frecuencia observada.
 
 Se usan dos fuentes: las probabilidades fuera de pliegue del bucle externo sobre los 671 pacientes de entrenamiento (más puntos por *bin*) y las del conjunto de prueba.
 
 ```{r calibracion-mod, fig.width = 11, fig.height = 5, class.source = "fold-hide"}
-leer("calibracion_curvas.csv") |>
-  filter(n > 0) |>
+oof_sel <- map(set_names(MODELOS),
+               ~ oof[[id_combo(.x, finales[[.x]]$balanceo, finales[[.x]]$metodo)]])
+bind_rows(
+  map_dfr(MODELOS, ~ curva_confiabilidad(y_train, oof_sel[[.x]], 10) |>
+            mutate(modelo = .x, fuente = "oof")),
+  map_dfr(MODELOS, ~ curva_confiabilidad(y_test, proba_test[[.x]], 5) |>
+            mutate(modelo = .x, fuente = "test"))
+) |>
   mutate(Modelo = factor(nombre(modelo), levels = nombre(MODELOS)),
          fuente = factor(fuente, levels = c("oof", "test"),
                          labels = c("Fuera de pliegue (entrenamiento, n = 671)",
@@ -711,7 +915,11 @@ leer("calibracion_curvas.csv") |>
   labs(title = "Diagramas de confiabilidad (tamaño del punto = pacientes en el bin)",
        x = "Probabilidad predicha de GBM", y = "Frecuencia observada de GBM")
 
-cal <- leer("calibracion_metricas.csv")
+cal <- tibble(modelo = MODELOS,
+              brier_oof = map_dbl(MODELOS, ~ mean((oof_sel[[.x]] - y_train)^2)),
+              ece_oof = map_dbl(MODELOS, ~ ece(y_train, oof_sel[[.x]])),
+              brier_test = map_dbl(MODELOS, ~ mean((proba_test[[.x]] - y_test)^2)),
+              ece_test = map_dbl(MODELOS, ~ ece(y_test, proba_test[[.x]], 5)))
 cm_ <- function(m, col) cal[[col]][cal$modelo == m]
 cal |>
   transmute(Modelo = nombre(modelo), `Brier OOF` = num(brier_oof, 4), `ECE OOF` = num(ece_oof, 4),
@@ -721,39 +929,55 @@ cal |>
 
 ### Recalibración
 
-Se prueban las dos técnicas clásicas, ajustadas con validación cruzada de 5 pliegues **sobre el entrenamiento**: el **escalado de Platt** (una sigmoide sobre la salida del modelo, paramétrico y estable con pocos datos) y la **regresión isotónica** (una función monótona escalonada, más flexible pero con riesgo de sobreajuste con pocos pacientes por *bin*). Su efecto se mide en el conjunto de prueba.
+Se prueban las dos técnicas clásicas, ajustadas con validación cruzada de 5 pliegues sobre el entrenamiento: el escalado de Platt (una regresión logística, `glm`, sobre el log-odds del modelo; paramétrico y estable con pocos datos) y la regresión isotónica (`isoreg`, una función monótona escalonada, más flexible pero con riesgo de sobreajuste con pocos pacientes por *bin*). En cada pliegue se ajusta el pipeline con cuatro quintas partes y el calibrador con la quinta restante, y la probabilidad final es la media de los cinco pares. Su efecto se mide en el conjunto de prueba.
 
 ```{r recalibracion-mod, class.source = "fold-hide"}
-recal <- leer("recalibracion.csv")
-rc <- function(m, met) recal$ece[recal$Modelo == m & recal$`Método` == met]
+recal <- en_cache("recalibracion",
+                  function() recalibrar(finales, X_train, y_train, X_test, y_test), RECALCULAR)
+rc <- function(m, met) recal$ece[recal$Modelo == m & recal$Metodo == met]
 recal |>
-  transmute(Modelo, `Método`, `AUC test` = num(auc, 4), `Brier test` = num(brier, 4),
+  transmute(Modelo, `Método` = Metodo, `AUC test` = num(auc, 4), `Brier test` = num(brier, 4),
             `ECE test` = num(ece, 4)) |>
   tabla_resultado("Efecto de la recalibración en el conjunto de prueba",
                   align = c("l", "l", "r", "r", "r")) |>
   collapse_rows(columns = 1, valign = "top")
 ```
 
-La regresión logística y XGBoost están razonablemente bien calibrados (ECE ≈ `r num(cm_("logistica", "ece_oof"), 2)` fuera de pliegue); sus curvas siguen la diagonal salvo en la zona intermedia (0,3–0,5), donde hay pocos pacientes y la frecuencia observada oscila alrededor de la predicha. Random Forest es el peor calibrado (ECE `r num(cm_("random_forest", "ece_oof"), 3)` fuera de pliegue, `r num(cm_("random_forest", "ece_test"), 3)` en prueba): entre 0,3 y 0,5 predice probabilidades de GBM claramente mayores que la frecuencia observada. Es el efecto combinado de dos cosas conocidas: el promedio de árboles comprime las probabilidades hacia el centro y ADASYN, que se eligió para este modelo, desplaza las probabilidades hacia la clase minoritaria al entrenar con más GBM sintéticos de los que hay en la población.
+```{r valores-calibracion-mod, include = FALSE}
+peor_cal <- cal |> slice_max(ece_oof, n = 1)
+mejor_recal <- recal |> group_by(Modelo) |> slice_min(ece, n = 1, with_ties = FALSE) |> ungroup() |>
+  slice(match(nombre(MODELOS), Modelo))
+metodo_frase <- c("Sin recalibrar" = "el modelo sin recalibrar", "Platt" = "el escalado de Platt",
+                  "Isotónica" = "la regresión isotónica")
+peor_nombre <- nombre(peor_cal$modelo)
+peor_recal <- mejor_recal |> filter(Modelo == peor_nombre)
+hay_balanceo <- any(map_chr(MODELOS, ~ finales[[.x]]$balanceo) != "ninguno")
+rl_mejora <- rc("Regresión Logística", "Sin recalibrar") > min(recal$ece[recal$Modelo == "Regresión Logística"])
+```
 
-La recalibración reduce el ECE en los tres modelos sin cambiar apenas la AUC (una transformación monótona no cambia el orden de los pacientes): la regresión isotónica lleva el ECE de Random Forest de `r num(rc("Random Forest", "Sin recalibrar"), 3)` a `r num(rc("Random Forest", "Isotónica"), 3)`, el de la logística de `r num(rc("Regresión Logística", "Sin recalibrar"), 3)` a `r num(rc("Regresión Logística", "Isotónica"), 3)` y el de XGBoost de `r num(rc("XGBoost", "Sin recalibrar"), 3)` a `r num(rc("XGBoost", "Isotónica"), 3)`; el escalado de Platt también mejora a los tres, aunque menos. El Brier score casi no cambia, porque está dominado por la discriminación, que es la misma. Con solo 168 pacientes de prueba repartidos en cinco *bins* estas cifras tienen bastante incertidumbre; la conclusión robusta es que **si se usan las probabilidades de Random Forest, conviene recalibrarlas**.
+El modelo mejor calibrado fuera de pliegue es `r nombre(cal$modelo[which.min(cal$ece_oof)])` (ECE `r num(min(cal$ece_oof), 3)`) y el peor `r nombre(peor_cal$modelo)` (ECE `r num(peor_cal$ece_oof, 3)` fuera de pliegue y `r num(peor_cal$ece_test, 3)` en prueba). Las curvas siguen la diagonal en los extremos, donde están casi todos los pacientes, y se separan en la zona intermedia (0,3–0,6), donde hay pocos y la frecuencia observada oscila. `r if (hay_balanceo) "Dos efectos conocidos explican las desviaciones: el promedio de árboles de Random Forest comprime las probabilidades hacia el centro, y el balanceo (sobremuestreo o pesos de clase) desplaza las probabilidades hacia GBM al entrenar con más GBM, reales o ponderados, de los que hay en la población." else "Un efecto conocido explica parte de las desviaciones: el promedio de árboles de Random Forest comprime las probabilidades hacia el centro. Los tres modelos finales se entrenan sin balanceo, así que sus probabilidades no están desplazadas hacia GBM."`
+
+La recalibración cambia el ECE sin mover apenas la AUC (una transformación monótona no cambia el orden de los pacientes; la isotónica, al ser escalonada, puede crear empates y moverla un poco). El ECE más bajo en prueba lo da `r paste0(metodo_frase[mejor_recal$Metodo], " en ", mejor_recal$Modelo, " (", num(mejor_recal$ece, 3), ")", collapse = "; ")`. `r if (peor_recal$Metodo == "Sin recalibrar") paste0("En ", peor_nombre, ", el peor calibrado fuera de pliegue, ninguna de las dos técnicas mejora el ECE en prueba (", num(rc(peor_nombre, "Sin recalibrar"), 3), " sin recalibrar, ", num(rc(peor_nombre, "Platt"), 3), " con Platt y ", num(rc(peor_nombre, "Isotónica"), 3), " con la isotónica).") else paste0("En ", peor_nombre, ", el peor calibrado fuera de pliegue, ", metodo_frase[peor_recal$Metodo], " lleva el ECE de ", num(rc(peor_nombre, "Sin recalibrar"), 3), " a ", num(peor_recal$ece, 3), ".")` El Brier score casi no cambia, porque está dominado por la discriminación, que es la misma. Con solo 168 pacientes de prueba repartidos en cinco *bins* estas cifras tienen bastante incertidumbre, y las diferencias de ECE entre métodos son de unas centésimas; la conclusión robusta es que si se van a usar las probabilidades como riesgo, conviene comprobar su calibración y recalibrarlas cuando mejore.
 
 ## Interpretabilidad: SHAP y LIME
 
 ### Valores de Shapley
 
-Los valores SHAP reparten la predicción de cada paciente entre sus variables según el valor de Shapley de la teoría de juegos cooperativos: la contribución de una variable es su aporte marginal promedio sobre todos los órdenes posibles en que las variables pueden "entrar" al modelo. Es la única atribución que cumple a la vez **eficiencia** (las contribuciones suman la predicción menos el valor base), **simetría** (dos variables que aportan lo mismo reciben lo mismo) y **aditividad**, además de dar contribución cero a una variable que no influye.
+Los valores SHAP reparten la predicción de cada paciente entre sus variables según el valor de Shapley de la teoría de juegos cooperativos: la contribución de una variable es su aporte marginal promedio sobre todos los órdenes posibles en que las variables pueden "entrar" al modelo. Es la única atribución que cumple a la vez eficiencia (las contribuciones suman la predicción menos el valor base), simetría (dos variables que aportan lo mismo reciben lo mismo) y aditividad, además de dar contribución cero a una variable que no influye.
 
-Para XGBoost se calculan con el algoritmo **TreeSHAP** exacto que implementa la propia librería (`pred_contribs=True`, el mismo que usa `shap.TreeExplainer`), en la escala del log-odds de GBM. Para la regresión logística los valores SHAP tienen forma cerrada: con variables tratadas como independientes, la contribución de la variable $j$ es $\beta_j (x_j - \bar{x}_j)$ en esa misma escala.
+Para XGBoost se calculan con el algoritmo TreeSHAP exacto que implementa la propia librería (`predict(..., predcontrib = TRUE)`), en la escala del log-odds de GBM. Para la regresión logística los valores SHAP tienen forma cerrada: con variables tratadas como independientes, la contribución de la variable $j$ es $\beta_j (x_j - \bar{x}_j)$ en esa misma escala.
 
 ```{r beeswarm-mod, fig.width = 13, fig.height = 6.2, class.source = "fold-hide"}
-X_shap <- leer("shap_valores_x.csv") |> select(-conjunto)
+X_todos <- bind_rows(X_train, X_test)
+sx <- shap_xgb(finales$xgboost$pipeline, X_todos)
+sl <- shap_logistica(finales$logistica$pipeline, X_todos, X_train)
+sv_xgb <- as.data.frame(sx$valores); base_xgb <- sx$base
+sv_rl  <- as.data.frame(sl$valores); base_rl  <- sl$base
 
-beeswarm <- function(archivo, titulo, max_vars = 14) {
-  sv <- leer(archivo)
+beeswarm <- function(sv, titulo, max_vars = 14) {
   orden <- names(sort(colMeans(abs(sv)), decreasing = TRUE))[seq_len(max_vars)]
   # El color es el valor de la variable reescalado a [0, 1] (en las binarias, 0 o 1)
-  valor_rel <- map_dfc(X_shap[orden], ~ (.x - min(.x)) / (max(.x) - min(.x)))
+  valor_rel <- map_dfc(X_todos[orden], ~ (.x - min(.x)) / (max(.x) - min(.x)))
   d <- tibble(variable = rep(orden, each = nrow(sv)),
               shap = unlist(sv[orden], use.names = FALSE),
               valor = unlist(valor_rel, use.names = FALSE)) |>
@@ -767,14 +991,18 @@ beeswarm <- function(archivo, titulo, max_vars = 14) {
     labs(title = titulo, x = "Valor SHAP (contribución al log-odds de GBM)", y = NULL) +
     theme(legend.position = "right")
 }
-beeswarm("shap_xgboost.csv", "XGBoost: SHAP sobre los 839 pacientes") +
-  beeswarm("shap_logistica.csv", "Regresión logística: SHAP sobre los 839 pacientes") +
+beeswarm(sv_xgb, "XGBoost: SHAP sobre los 839 pacientes") +
+  beeswarm(sv_rl, "Regresión logística: SHAP sobre los 839 pacientes") +
   plot_layout(guides = "collect")
 
-importancia <- leer("importancia_shap.csv") |> arrange(desc(XGBoost))
+importancia <- tibble(variable = PREDICTORAS,
+                      XGBoost = colMeans(abs(sv_xgb))[PREDICTORAS],
+                      `Regresión Logística` = colMeans(abs(sv_rl))[PREDICTORAS]) |>
+  mutate(across(-variable, ~ 100 * .x / sum(.x))) |>
+  arrange(desc(XGBoost))
 imp <- function(v, col) importancia[[col]][importancia$variable == v]
-coef_rl <- leer("coeficientes_logistica.csv")
-anuladas <- coef_rl$variable[coef_rl$coeficiente == 0]
+coef_rl <- coeficientes_logistica(finales$logistica$pipeline)$beta
+anuladas <- names(coef_rl)[coef_rl == 0]
 importancia |>
   head(10) |>
   mutate(across(-variable, ~ num(.x, 1))) |>
@@ -783,32 +1011,50 @@ importancia |>
 ```
 
 ```{r valores-shap-mod, include = FALSE}
+top4 <- head(importancia$variable, 4)
 top4_xgb <- sum(head(importancia$XGBoost, 4))
-top4_rl  <- sum(importancia[["Regresión Logística"]][importancia$variable %in% head(importancia$variable, 4)])
+top4_rl  <- sum(importancia[["Regresión Logística"]][importancia$variable %in% top4])
 puesto_atrx <- which(importancia$variable == "ATRX")
-sv_xgb  <- leer("shap_xgboost.csv")
-egfr_shap <- mean(sv_xgb$EGFR[X_shap$EGFR == 1])
+egfr_shap <- mean(sv_xgb$EGFR[X_todos$EGFR == 1])
 dataset_completo <- read_csv("dataset/TCGA_InfoWithGrade.csv", show_col_types = FALSE)
 egfr_mutados <- sum(dataset_completo$EGFR == 1)
 egfr_gbm     <- sum(dataset_completo$EGFR == 1 & dataset_completo$Grade == 1)
+# Genes que, mutados, empujan hacia LGG en XGBoost (SHAP medio negativo entre los mutados)
+hacia_lgg <- keep(c("CIC", "NF1", "IDH2"), ~ mean(sv_xgb[[.x]][X_todos[[.x]] == 1]) < 0)
 ```
 
-Los dos modelos, construidos con supuestos opuestos, cuentan la misma historia: **`IDH1` es con diferencia la variable más importante** (`r num(imp("IDH1", "XGBoost"), 0)` % de la contribución total en XGBoost y `r num(imp("IDH1", "Regresión Logística"), 0)` % en la logística), seguida de la edad al diagnóstico (`r num(imp("Age_at_diagnosis", "XGBoost"), 0)`–`r num(imp("Age_at_diagnosis", "Regresión Logística"), 0)` %), `TP53` (`r num(imp("TP53", "XGBoost"), 0)`–`r num(imp("TP53", "Regresión Logística"), 0)` %) y `PTEN` (`r num(imp("PTEN", "Regresión Logística"), 0)`–`r num(imp("PTEN", "XGBoost"), 0)` %). Estas cuatro variables reúnen el `r num(top4_xgb, 0)` % de la importancia en XGBoost y el `r num(top4_rl, 0)` % en la logística. El sentido de los efectos principales coincide con el EDA: la mutación de `IDH1` empuja con fuerza hacia LGG (valores SHAP de −2 en log-odds), la edad avanzada hacia GBM de forma aproximadamente monótona, y la mutación de `PTEN` hacia GBM; `CIC`, `NF1` e `IDH2` mutados empujan hacia LGG.
+Los dos modelos, construidos con supuestos opuestos, cuentan la misma historia: `IDH1` es con diferencia la variable más importante (`r num(imp("IDH1", "XGBoost"), 0)` % de la contribución total en XGBoost y `r num(imp("IDH1", "Regresión Logística"), 0)` % en la logística). Las cuatro primeras en XGBoost (`r paste0("\x60", top4, "\x60", collapse = ", ")`) reúnen el `r num(top4_xgb, 0)` % de la importancia en XGBoost y el `r num(top4_rl, 0)` % en la logística. El sentido de los efectos principales coincide con el EDA: la mutación de `IDH1` empuja con fuerza hacia LGG, la edad avanzada hacia GBM de forma aproximadamente monótona, y la mutación de `PTEN` hacia GBM`r if (length(hacia_lgg)) paste0("; ", lista_y(paste0("\x60", hacia_lgg, "\x60")), if (length(hacia_lgg) > 1) " mutados empujan" else " mutado empuja", " hacia LGG") else ""`.
 
 Hay tres diferencias con el análisis univariado del EDA que muestran lo que aporta un modelo multivariante:
 
-- **`TP53` sube al tercer lugar**, aunque su asociación marginal con `Grade` era moderada. Su efecto es condicional: una vez se sabe si hay mutación de `IDH1`, la mutación de `TP53` aumenta la probabilidad de GBM. Una explicación biológica plausible, que el modelo no puede confirmar, es que entre los gliomas con `IDH1` mutado `TP53` distingue el linaje astrocítico (que incluye los astrocitomas de alto grado) del oligodendroglial (asociado a `CIC` y `FUBP1`).
-- **`ATRX` pierde casi todo su peso**: es la variable número `r puesto_atrx` en XGBoost (`r num(imp("ATRX", "XGBoost"), 1)` %) y la regularización L1 de la logística la anula por completo (0 %). El EDA ya había mostrado su fuerte coocurrencia con `TP53` ($V = 0{,}55$) e `IDH1` ($V = 0{,}46$): su información es redundante con la de esas dos variables, y el modelo lineal con L1 se queda con una sola copia. En total, L1 anula `r length(anuladas)` de las 23 variables: `r paste0("\x60", anuladas, "\x60", collapse = ", ")`.
-- **`EGFR` cambia de signo.** En el dataset la mutación de `EGFR` se asocia con GBM (`r egfr_gbm` de los `r egfr_mutados` pacientes mutados son GBM); en los dos modelos, en cambio, su contribución entre los pacientes mutados es **negativa** (SHAP medio de `r num(egfr_shap)` en XGBoost, coeficiente de `r num(coef_rl$coeficiente[coef_rl$variable == "EGFR"])` en la logística). No es una contradicción: los GBM con `EGFR` mutado son también mayores y sin mutación de `IDH1`, y esas dos variables ya explican su grado. Una vez descontadas, tener `EGFR` mutado no añade riesgo de GBM, e incluso lo reduce ligeramente. Es la diferencia entre asociación marginal y efecto condicional.
+- `TP53` sube al puesto `r which(importancia$variable == "TP53")` en XGBoost (`r num(imp("TP53", "XGBoost"), 1)` %), aunque su asociación marginal con `Grade` era moderada. Su efecto es condicional: una vez se sabe si hay mutación de `IDH1`, la mutación de `TP53` aumenta la probabilidad de GBM. Una explicación biológica plausible, que el modelo no puede confirmar, es que entre los gliomas con `IDH1` mutado `TP53` distingue el linaje astrocítico (que incluye los astrocitomas de alto grado) del oligodendroglial (asociado a `CIC` y `FUBP1`).
+- `ATRX` pierde casi todo su peso: es la variable número `r puesto_atrx` en XGBoost (`r num(imp("ATRX", "XGBoost"), 1)` %)`r if ("ATRX" %in% anuladas) " y la regularización L1 de la logística la anula por completo (0 %)" else paste0(" y aporta el ", num(imp("ATRX", "Regresión Logística"), 1), " % en la logística")`. El EDA ya había mostrado su fuerte coocurrencia con `TP53` ($V = 0{,}55$) e `IDH1` ($V = 0{,}46$): su información es redundante con la de esas dos variables. `r if (length(anuladas)) paste0("En total, la logística final (", finales$logistica$params$penalizacion, ") deja en cero ", length(anuladas), " de las 23 variables: ", paste0("\x60", anuladas, "\x60", collapse = ", "), ".") else paste0("La logística final usa penalización ", toupper(finales$logistica$params$penalizacion), ", así que ningún coeficiente queda exactamente en cero.")`
+- `EGFR` cambia de signo. En el dataset la mutación de `EGFR` se asocia con GBM (`r egfr_gbm` de los `r egfr_mutados` pacientes mutados son GBM); en los dos modelos, en cambio, su contribución entre los pacientes mutados es `r if (egfr_shap < 0) "negativa" else "pequeña"` (SHAP medio de `r num(egfr_shap)` en XGBoost, coeficiente de `r num(coef_rl[["EGFR"]])` en la logística). No es una contradicción: los GBM con `EGFR` mutado son también mayores y sin mutación de `IDH1`, y esas dos variables ya explican su grado. Una vez descontadas, tener `EGFR` mutado no añade riesgo de GBM. Es la diferencia entre asociación marginal y efecto condicional.
 
 XGBoost, además, capta efectos no lineales que la logística no puede representar: la contribución de la edad tiene escalones (se aprecian grupos separados de puntos), y la de `TP53` toma valores distintos según el resto del perfil del paciente.
 
 ### Explicaciones locales
 
-Se explican dos pacientes del conjunto de prueba con XGBoost: uno **bien clasificado con alta confianza** y el **peor error** (el paciente con mayor diferencia entre su clase real y la probabilidad predicha). El gráfico *waterfall* parte del valor base (log-odds medio de la cohorte) y suma una a una las contribuciones hasta llegar a la predicción del paciente.
+Se explican dos pacientes del conjunto de prueba con XGBoost: uno bien clasificado con alta confianza (el GBM con menor error) y el peor error (el paciente con mayor diferencia entre su clase real y la probabilidad predicha). El gráfico *waterfall* parte del valor base (log-odds medio de la cohorte) y suma una a una las contribuciones hasta llegar a la predicción del paciente. Los pacientes se identifican por su fila en `TCGA_InfoWithGrade.csv` (empezando en 0).
 
 ```{r waterfall-mod, fig.width = 13, fig.height = 5, class.source = "fold-hide"}
-locales <- leer("explicaciones_locales.csv")
+p_xgb <- proba_test$xgboost
+error <- abs(y_test - p_xgb)
+i_bien <- which.min(ifelse(y_test == 1, error, Inf))
+i_mal  <- which.max(error)
+sv_test <- sv_xgb[nrow(X_train) + seq_len(nrow(X_test)), ]
+pesos_lime <- en_cache("lime", function() {
+  map(list(i_bien, i_mal), ~ lime_pesos(finales$xgboost$pipeline, X_train, X_test[.x, ]))
+}, RECALCULAR)
+
+locales <- map2_dfr(list(i_bien, i_mal), c("bien clasificado", "peor error"), function(i, rotulo) {
+  k <- if (rotulo == "bien clasificado") 1 else 2
+  tibble(paciente = datos$id_test[i], rotulo = rotulo, real = y_test[i], proba = p_xgb[i],
+         variable = PREDICTORAS, valor = unlist(X_test[i, PREDICTORAS]),
+         shap = unlist(sv_test[i, PREDICTORAS]),
+         lime_media = colMeans(pesos_lime[[k]])[PREDICTORAS],
+         lime_de = apply(pesos_lime[[k]], 2, sd)[PREDICTORAS])
+})
 
 waterfall <- function(id, max_vars = 9) {
   d <- locales |> filter(paciente == id)
@@ -822,11 +1068,11 @@ waterfall <- function(id, max_vars = 9) {
               shap) |>
     add_row(etiqueta = sprintf("otras %d variables", nrow(d) - max_vars), shap = resto,
             .before = 1) |>
-    mutate(fin = esc$base_xgb + cumsum(shap), inicio = fin - shap,
+    mutate(fin = base_xgb + cumsum(shap), inicio = fin - shap,
            etiqueta = factor(etiqueta, levels = etiqueta), sentido = shap > 0)
   info <- d[1, ]
   ggplot(barras) +
-    geom_vline(xintercept = esc$base_xgb, color = "#9aa5b1", linetype = "dashed") +
+    geom_vline(xintercept = base_xgb, color = "#9aa5b1", linetype = "dashed") +
     geom_segment(aes(x = inicio, xend = fin, y = etiqueta, yend = etiqueta, color = sentido),
                  linewidth = 6) +
     geom_text(aes(x = pmax(inicio, fin), y = etiqueta,
@@ -837,24 +1083,36 @@ waterfall <- function(id, max_vars = 9) {
     labs(title = sprintf("Paciente %d (%s): real %s, P(GBM) = %s", info$paciente, info$rotulo,
                          ifelse(info$real == 1, "GBM", "LGG"), num(info$proba)),
          subtitle = sprintf("Valor base %s → predicción %s (log-odds)",
-                            num(esc$base_xgb), num(esc$base_xgb + sum(d$shap))),
+                            num(base_xgb), num(base_xgb + sum(d$shap))),
          x = "Log-odds de GBM", y = NULL)
 }
-ids <- unique(locales$paciente)
-waterfall(ids[1]) + waterfall(ids[2])
+id_bien <- datos$id_test[i_bien]
+id_mal  <- datos$id_test[i_mal]
+waterfall(id_bien) + waterfall(id_mal)
 
 loc <- function(id, var, col = "shap") locales[[col]][locales$paciente == id & locales$variable == var]
-id_bien <- locales$paciente[locales$rotulo == "bien clasificado"][1]
-id_mal  <- locales$paciente[locales$rotulo == "peor error"][1]
+mutados <- function(id) {
+  v <- locales |> filter(paciente == id, variable %in% GENES, valor == 1) |> pull(variable)
+  if (length(v) == 0) "ninguna mutación" else paste0("`", v, "`", collapse = ", ")
+}
 ```
 
-**Paciente `r id_bien` (GBM, P = `r num(loc(id_bien, "IDH1", "proba"))`).** Es el perfil típico de un glioblastoma: `r num(loc(id_bien, "Age_at_diagnosis", "valor"), 0)` años, sin mutación de `IDH1`, con `TP53`, `PTEN` y `PIK3R1` mutados. La edad y la ausencia de `IDH1` aportan `r num(loc(id_bien, "Age_at_diagnosis"))` y `r num(loc(id_bien, "IDH1"))` en log-odds; las mutaciones de `TP53` y `PTEN` suman `r num(loc(id_bien, "TP53") + loc(id_bien, "PTEN"))` adicionales. Todas las contribuciones relevantes van en la misma dirección.
+```{r valores-locales-mod, include = FALSE}
+top_loc <- function(id, n = 3) {
+  d <- locales |> filter(paciente == id) |> slice_max(abs(shap), n = n)
+  paste0("`", d$variable, "` (", ifelse(d$shap > 0, "+", ""), num(d$shap), ")", collapse = ", ")
+}
+info_mal <- locales |> filter(paciente == id_mal) |> slice(1)
+idh1_mal <- loc(id_mal, "IDH1", "valor") == 1
+```
 
-**Paciente `r id_mal` (GBM, P = `r num(loc(id_mal, "IDH1", "proba"))`), el peor error.** Tiene `r num(loc(id_mal, "Age_at_diagnosis", "valor"), 0)` años y mutaciones en `IDH1`, `TP53` y `ATRX`. La mutación de `IDH1` (`r num(loc(id_mal, "IDH1"))`) arrastra la predicción hacia LGG; `TP53` empuja hacia GBM (+`r num(loc(id_mal, "TP53"))`) pero no alcanza a compensar, y la edad relativamente joven (`r num(loc(id_mal, "Age_at_diagnosis"))`) y la mutación de `ATRX` (`r num(loc(id_mal, "ATRX"))`) refuerzan la predicción de LGG. Este perfil (`IDH1` + `TP53` + `ATRX` en un adulto joven) es el de un astrocitoma con `IDH` mutado; la clasificación de la OMS de 2021 ya no llama glioblastoma a estos tumores aunque sean de grado 4, mientras que las etiquetas de TCGA siguen el criterio histológico anterior. El error del modelo no es aleatorio: corresponde a un subgrupo cuyo grado no puede deducirse del perfil mutacional disponible y que requeriría información adicional (histología, `CDKN2A/B`, 1p/19q).
+Paciente `r id_bien` (GBM, P = `r num(loc(id_bien, "IDH1", "proba"))`). `r num(loc(id_bien, "Age_at_diagnosis", "valor"), 0)` años, `r if (loc(id_bien, "IDH1", "valor") == 0) "sin mutación de \x60IDH1\x60" else "con \x60IDH1\x60 mutado"` y con `r mutados(id_bien)`. Las contribuciones más grandes son `r top_loc(id_bien)`: casi todas empujan en la misma dirección, hacia GBM. Es el perfil típico de un glioblastoma.
+
+Paciente `r id_mal` (`r ifelse(info_mal$real == 1, "GBM", "LGG")`, P = `r num(info_mal$proba)`), el peor error. Tiene `r num(loc(id_mal, "Age_at_diagnosis", "valor"), 0)` años y `r mutados(id_mal)`. Las contribuciones más grandes son `r top_loc(id_mal)`. `r if (info_mal$real == 1 && idh1_mal) "La mutación de \x60IDH1\x60 arrastra la predicción hacia LGG y lo demás no alcanza a compensarla. Este perfil (\x60IDH1\x60 mutado en un adulto joven, a menudo con \x60TP53\x60 y \x60ATRX\x60) es el de un astrocitoma con \x60IDH\x60 mutado; la clasificación de la OMS de 2021 ya no llama glioblastoma a estos tumores aunque sean de grado 4, mientras que las etiquetas de TCGA siguen el criterio histológico anterior. El error del modelo no es aleatorio: corresponde a un subgrupo cuyo grado no puede deducirse del perfil mutacional disponible y que requeriría información adicional (histología, \x60CDKN2A/B\x60, 1p/19q)." else "Su perfil se parece más al del otro grado que al suyo, y el modelo no tiene variables con las que distinguirlo: haría falta información adicional (histología, \x60CDKN2A/B\x60, 1p/19q)."`
 
 ### Comparación con LIME
 
-LIME explica una predicción ajustando, alrededor del paciente, un modelo lineal ponderado sobre perturbaciones aleatorias de sus variables. Es agnóstico al modelo, pero su explicación depende de cómo se perturbe (aquí: la edad se discretiza en cuartiles y las binarias se muestrean con su frecuencia en el entrenamiento), de la anchura del núcleo de proximidad y de la semilla. Sus pesos están en la escala de la probabilidad, no del log-odds, así que se comparan **rangos y signos**, no magnitudes. Para medir la estabilidad, cada explicación se repite con 10 semillas.
+LIME (paquete `lime`) explica una predicción ajustando, alrededor del paciente, un modelo lineal ponderado sobre perturbaciones aleatorias de sus variables. Es agnóstico al modelo, pero su explicación depende de cómo se perturbe (aquí: la edad se discretiza en cuartiles y las binarias, presentadas como factores, se muestrean con su frecuencia en el entrenamiento), de la anchura del núcleo de proximidad y de la semilla. Sus pesos están en la escala de la probabilidad, no del log-odds, así que se comparan rangos y signos, no magnitudes. Para medir la estabilidad, cada explicación se repite con 10 semillas y 5 000 perturbaciones.
 
 ```{r lime-mod, fig.width = 13, fig.height = 4.8, class.source = "fold-hide"}
 grafico_lime <- function(id) {
@@ -883,7 +1141,17 @@ grafico_lime <- function(id) {
 grafico_lime(id_bien) + grafico_lime(id_mal) + plot_layout(guides = "collect") &
   theme(legend.position = "bottom")
 
-lime_comp <- leer("lime_comparacion.csv")
+lime_comp <- map_dfr(c(id_bien, id_mal), function(id) {
+  d <- locales |> filter(paciente == id)
+  top <- order(abs(d$shap), decreasing = TRUE)[1:8]
+  orden_lime <- order(abs(d$lime_media), decreasing = TRUE)
+  tibble(paciente = id, rotulo = d$rotulo[1],
+         spearman = cor(abs(d$shap), abs(d$lime_media), method = "spearman"),
+         signos = mean(sign(d$shap[top]) == sign(d$lime_media[top])),
+         top3_shap = paste(d$variable[order(abs(d$shap), decreasing = TRUE)[1:3]], collapse = ", "),
+         top3_lime = paste(d$variable[orden_lime[1:3]], collapse = ", "),
+         cv_lime_top5 = mean(d$lime_de[orden_lime[1:5]] / abs(d$lime_media[orden_lime[1:5]])))
+})
 lime_comp |>
   transmute(Paciente = sprintf("%d (%s)", paciente, rotulo),
             `Spearman |SHAP| vs |LIME| (23 variables)` = num(spearman, 3),
@@ -892,18 +1160,24 @@ lime_comp |>
   tabla_resultado("Comparación entre SHAP y LIME", full_width = TRUE)
 ```
 
-En términos generales, LIME y SHAP coinciden: la correlación de Spearman entre la magnitud de las contribuciones de las 23 variables es de `r num(lime_comp$spearman[1], 2)` y `r num(lime_comp$spearman[2], 2)`, y el signo coincide en todas las variables principales. LIME también es estable aquí (el coeficiente de variación de sus pesos entre 10 semillas es del `r num(100 * min(lime_comp$cv_lime_top5), 0)`–`r num(100 * max(lime_comp$cv_lime_top5), 0)` %, gracias a las 5 000 perturbaciones).
+```{r valores-lime-mod, include = FALSE}
+lime_top3 <- unique(unlist(str_split(lime_comp$top3_lime, ", ")))
+shap_top3 <- unique(unlist(str_split(lime_comp$top3_shap, ", ")))
+solo_lime <- setdiff(lime_top3, shap_top3)
+```
 
-La divergencia más clara es `IDH2`: LIME la pone entre las tres variables más importantes en los dos pacientes, mientras que SHAP le da una contribución casi nula. Ninguno de los dos está equivocado; responden preguntas distintas:
+En términos generales, LIME y SHAP `r if (min(lime_comp$spearman) > 0.6) "coinciden" else "coinciden solo en parte"`: la correlación de Spearman entre la magnitud de las contribuciones de las 23 variables es de `r num(lime_comp$spearman[1], 2)` y `r num(lime_comp$spearman[2], 2)`, y el signo coincide en el `r pct(lime_comp$signos[1])` y el `r pct(lime_comp$signos[2])` de las ocho variables principales según SHAP. LIME es `r if (max(lime_comp$cv_lime_top5) < 0.1) "estable" else "algo inestable"` aquí: el coeficiente de variación de sus pesos principales entre 10 semillas es del `r num(100 * min(lime_comp$cv_lime_top5), 0)`–`r num(100 * max(lime_comp$cv_lime_top5), 0)` %, con 5 000 perturbaciones.
 
-- **SHAP** reparte la diferencia entre la predicción del paciente y la predicción media. Como casi nadie tiene `IDH2` mutado (≈ 3 % de la cohorte), que este paciente no lo tenga lo deja prácticamente igual que el promedio: contribución cercana a cero.
-- **LIME** ajusta un modelo lineal sobre perturbaciones del paciente. En algunas perturbaciones `IDH2` pasa a valer 1, y en ese caso XGBoost baja mucho la probabilidad de GBM (la mutación de `IDH2`, como la de `IDH1`, es muy característica de LGG). LIME mide esa **sensibilidad contrafactual**: "si este paciente tuviera `IDH2` mutado, la predicción cambiaría mucho".
+`r if (length(solo_lime) > 1) paste0("Las divergencias más claras son ", lista_y(paste0("\x60", solo_lime, "\x60")), ": LIME las pone entre las tres variables más importantes, mientras que SHAP no. ") else if (length(solo_lime)) paste0("La divergencia más clara es \x60", solo_lime, "\x60: LIME la pone entre las tres variables más importantes, mientras que SHAP no. ") else "Las tres variables principales coinciden en los dos métodos. "`Cuando divergen, ninguno de los dos está equivocado; responden preguntas distintas:
 
-En general, las dos técnicas divergen con variables raras de efecto grande, con variables correlacionadas (LIME perturba cada variable por separado y puede crear combinaciones imposibles, como `ATRX` mutado sin `TP53`) y con la edad, que LIME discretiza en cuartiles y por eso pierde resolución (su peso relativo es menor que en SHAP para el paciente de `r num(loc(id_bien, "Age_at_diagnosis", "valor"), 0)` años). Para explicar la predicción de un paciente concreto, SHAP es preferible por sus propiedades de eficiencia y consistencia; LIME aporta una lectura complementaria de qué cambios del perfil alterarían el diagnóstico.
+- SHAP reparte la diferencia entre la predicción del paciente y la predicción media. Una variable rara (como `IDH2`, mutado en ≈ 3 % de la cohorte) que este paciente no tiene lo deja prácticamente igual que el promedio: contribución cercana a cero.
+- LIME ajusta un modelo lineal sobre perturbaciones del paciente. En algunas perturbaciones esa variable rara pasa a valer 1, y si el modelo reacciona mucho a ella LIME le da un peso grande. Mide una sensibilidad contrafactual: "si este paciente tuviera esa mutación, la predicción cambiaría mucho".
+
+En general, las dos técnicas divergen con variables raras de efecto grande, con variables correlacionadas (LIME perturba cada variable por separado y puede crear combinaciones imposibles, como `ATRX` mutado sin `TP53`) y con la edad, que LIME discretiza en cuartiles y por eso pierde resolución. Para explicar la predicción de un paciente concreto, SHAP es preferible por sus propiedades de eficiencia y consistencia; LIME aporta una lectura complementaria de qué cambios del perfil alterarían el diagnóstico.
 
 ## Robustez y estabilidad de las métricas
 
-Una AUC reportada como un solo número oculta la variabilidad del muestreo y de la optimización. Por eso todas las métricas del capítulo se dan como media ± desviación estándar sobre los 10 pliegues externos. Aquí se comparan dos magnitudes: cuánto varía **un mismo** procedimiento de un pliegue a otro y cuánto difieren **entre sí** los procedimientos.
+Una AUC reportada como un solo número oculta la variabilidad del muestreo y de la optimización. Por eso todas las métricas del capítulo se dan como media ± desviación estándar sobre los 10 pliegues externos. Aquí se comparan dos magnitudes: cuánto varía un mismo procedimiento de un pliegue a otro y cuánto difieren entre sí los procedimientos.
 
 ```{r robustez-mod, fig.width = 12, fig.height = 4.6, class.source = "fold-hide"}
 orden_combos <- resumen |> arrange(desc(auc_media)) |> pull(combo)
@@ -925,17 +1199,25 @@ tibble(
   Medida = c("DE media de un procedimiento entre pliegues",
              "DE de las medias entre los 48 procedimientos",
              "Rango de las medias (mejor − peor)"),
-  Valor = num(c(esc$de_dentro, esc$de_entre, esc$rango_medias), 4)
+  Valor = num(c(de_dentro, de_entre, rango_medias), 4)
 ) |>
   tabla_resultado("Variación dentro y entre procedimientos", align = c("l", "r"))
 ```
 
 ### Sensibilidad a la semilla
 
-Para las tres combinaciones finales se repite la búsqueda completa sobre el entrenamiento con cinco semillas distintas (la semilla cambia los pliegues internos, el muestreador del optimizador, el sobremuestreo y la aleatoriedad del modelo) y se mide la AUC en prueba de cada modelo resultante. Es una medida de cuánto depende el resultado de la suerte del procedimiento, no de la elección del modelo.
+Para las tres combinaciones finales se repite la búsqueda completa sobre el entrenamiento con cinco semillas distintas (la semilla cambia los pliegues internos, el muestreo del optimizador, el sobremuestreo y la aleatoriedad del modelo) y se mide la AUC en prueba de cada modelo resultante. Es una medida de cuánto depende el resultado de la suerte del procedimiento, no de la elección del modelo.
 
 ```{r semillas-mod, class.source = "fold-hide"}
-semillas <- leer("semillas.csv")
+semillas_t <- en_cache("semillas",
+                       function() sensibilidad_semillas(finales, X_train, y_train, X_test, y_test),
+                       RECALCULAR)
+semillas <- semillas_t |>
+  group_by(modelo) |>
+  summarise(auc_interna_media = mean(auc_interna), auc_interna_de = sd(auc_interna),
+            auc_test_media = mean(auc_test), auc_test_de = sd(auc_test),
+            auc_test_min = min(auc_test), auc_test_max = max(auc_test)) |>
+  slice(match(MODELOS, modelo))
 sm <- function(m, col) semillas[[col]][semillas$modelo == m]
 semillas |>
   transmute(Modelo = nombre(modelo),
@@ -946,36 +1228,39 @@ semillas |>
 mas_sensible <- semillas$modelo[which.max(semillas$auc_test_de)]
 ```
 
-La desviación estándar media de un procedimiento entre pliegues (`r num(esc$de_dentro, 3)`) es **`r num(esc$de_dentro / esc$de_entre, 0)` veces mayor** que la desviación entre las medias de los 48 procedimientos (`r num(esc$de_entre, 3)`), y casi tres veces mayor que la distancia entre el mejor y el peor (`r num(esc$rango_medias, 3)`). La variabilidad entre pacientes domina por completo la variabilidad entre métodos: con 67 pacientes por pliegue, un pliegue "difícil" (con más GBM de perfil `IDH1` mutado, como el paciente `r id_mal`) baja la AUC de todos los procedimientos a la vez, y uno fácil la sube, sin cambiar su orden.
+La desviación estándar media de un procedimiento entre pliegues (`r num(de_dentro, 3)`) es `r num(de_dentro / de_entre, 0)` veces mayor que la desviación entre las medias de los 48 procedimientos (`r num(de_entre, 3)`), y `r num(de_dentro / rango_medias, 1)` veces la distancia entre el mejor y el peor (`r num(rango_medias, 3)`). La variabilidad entre pacientes domina por completo la variabilidad entre métodos: con 67 pacientes por pliegue, un pliegue "difícil" (con más GBM de perfil `IDH1` mutado, como el paciente `r id_mal`) baja la AUC de todos los procedimientos a la vez, y uno fácil la sube, sin cambiar mucho su orden.
 
-La sensibilidad a la semilla apunta en la misma dirección. Repetir la búsqueda con cinco semillas cambia la AUC de prueba en ±`r num(sm("logistica", "auc_test_de"), 3)` en la regresión logística, ±`r num(sm("random_forest", "auc_test_de"), 3)` en Random Forest y ±`r num(sm("xgboost", "auc_test_de"), 3)` en XGBoost (rango total `r num(min(semillas$auc_test_min), 3)`–`r num(max(semillas$auc_test_max), 3)`). El más sensible es `r nombre(mas_sensible)`; en Random Forest se suman dos fuentes de azar que dependen de la semilla, el sobremuestreo de ADASYN y el *bagging*, mientras que la logística solo depende de los pliegues internos. En los tres casos la variación por semilla es del mismo orden que las diferencias entre modelos, así que ninguna diferencia observada puede atribuirse con seguridad a la elección del modelo sin una prueba formal.
+La sensibilidad a la semilla apunta en la misma dirección. Repetir la búsqueda con cinco semillas cambia la AUC de prueba en ±`r num(sm("logistica", "auc_test_de"), 3)` en la regresión logística, ±`r num(sm("random_forest", "auc_test_de"), 3)` en Random Forest y ±`r num(sm("xgboost", "auc_test_de"), 3)` en XGBoost (rango total `r num(min(semillas$auc_test_min), 3)`–`r num(max(semillas$auc_test_max), 3)`). El más sensible es `r nombre(mas_sensible)`: en los árboles se suman varias fuentes de azar que dependen de la semilla (el muestreo de filas y columnas y, si lo hay, el sobremuestreo), mientras que la logística solo depende de los pliegues internos y del optimizador. En los tres casos la variación por semilla es del mismo orden que las diferencias entre modelos, así que ninguna diferencia observada puede atribuirse con seguridad a la elección del modelo sin una prueba formal.
 
 ## Comparación estadística {#comparacion-estadistica}
 
 Con 48 combinaciones hay $\binom{48}{2} = 1\,128$ pares posibles; contrastarlos uno a uno con $\alpha = 0{,}05$ produciría unos 56 falsos positivos solo por azar. Por eso la comparación sigue una estrategia jerárquica:
 
-1. **Prueba ómnibus de Friedman** sobre los rangos de cada combinación en cada pliegue externo (los pliegues son los bloques: las 48 combinaciones se evaluaron sobre los mismos pliegues). $H_0$: todas tienen el mismo rango promedio. Se reporta también la corrección de Iman-Davenport, menos conservadora.
-2. Si se rechaza, **post-hoc de Nemenyi** con su **diferencia crítica (CD)**: dos procedimientos cuyos rangos promedio difieren menos que la CD son estadísticamente indistinguibles, con control conjunto del error tipo I.
-3. **Comparaciones dirigidas** entre los tres modelos finales con la **prueba de DeLong** sobre el conjunto de prueba, ajustadas por Holm, con intervalos **bootstrap BCa**.
-4. **Tamaño del efecto** (delta de Cliff) para todas las comparaciones, sean o no significativas.
+1. Prueba ómnibus de Friedman (`friedman.test`) sobre los rangos de cada combinación en cada pliegue externo (los pliegues son los bloques: las 48 combinaciones se evaluaron sobre los mismos pliegues). $H_0$: todas tienen el mismo rango promedio. Se reporta también la corrección de Iman-Davenport, menos conservadora.
+2. Si se rechaza, post-hoc de Nemenyi con su diferencia crítica (CD), $\text{CD} = q_\alpha \sqrt{k(k+1)/(6N)}$, con $q_\alpha$ el cuantil del rango estudentizado (`qtukey`) dividido entre $\sqrt{2}$: dos procedimientos cuyos rangos promedio difieren menos que la CD son estadísticamente indistinguibles, con control conjunto del error tipo I.
+3. Comparaciones dirigidas entre los tres modelos finales con la prueba de DeLong (`pROC::roc.test`) sobre el conjunto de prueba, ajustadas por Holm, con intervalos bootstrap BCa.
+4. Tamaño del efecto (delta de Cliff, `effsize::cliff.delta`) para todas las comparaciones, sean o no significativas.
 
 ### Prueba de Friedman y diferencia crítica sobre las 48 combinaciones
 
 ```{r friedman-mod, fig.width = 8, fig.height = 9.5, class.source = "fold-hide"}
+matriz48 <- pliegues |> select(pliegue, combo, auc) |>
+  pivot_wider(names_from = combo, values_from = auc) |> select(-pliegue) |> as.matrix()
+fr <- friedman(matriz48)
+cd48 <- diferencia_critica(fr$k, fr$N)
 tibble(
   Prueba = c("Friedman", "Iman-Davenport", "Diferencia crítica de Nemenyi (k = 48, N = 10)"),
-  Resultado = c(sprintf("χ²(%d) = %s; p = %s", esc$friedman_gl, num(esc$friedman_chi2, 2),
-                        num(esc$friedman_p, 4)),
-                sprintf("F = %s; p = %s", num(esc$iman_f, 2), num(esc$iman_p, 4)),
-                sprintf("CD = %s rangos", num(esc$cd48, 2)))
+  Resultado = c(sprintf("χ²(%d) = %s; p = %s", fr$gl, num(fr$chi2, 2), num_p(fr$p)),
+                sprintf("F = %s; p = %s", num(fr$F_ID, 2), num_p(fr$p_ID)),
+                sprintf("CD = %s rangos", num(cd48, 2)))
 ) |>
   tabla_resultado("Prueba ómnibus sobre las 48 combinaciones", align = c("l", "r"))
 
-rangos48 <- leer("rangos48.csv") |>
+rangos48 <- tibble(combo = names(fr$rangos), rango = unname(fr$rangos)) |>
   mutate(Modelo = factor(nombre(str_extract(combo, "^[^|]+")), levels = nombre(MODELOS)),
          etiqueta = factor(etiqueta_combo(combo), levels = rev(etiqueta_combo(combo))))
 ggplot(rangos48, aes(rango, etiqueta, color = Modelo)) +
-  annotate("rect", xmin = min(rangos48$rango), xmax = min(rangos48$rango) + esc$cd48,
+  annotate("rect", xmin = min(rangos48$rango), xmax = min(rangos48$rango) + cd48,
            ymin = -Inf, ymax = Inf, fill = "#eef2f7") +
   geom_point(size = 2.4) +
   scale_color_manual(values = COLOR_MODELO, name = NULL) +
@@ -985,25 +1270,35 @@ ggplot(rangos48, aes(rango, etiqueta, color = Modelo)) +
   theme(axis.text.y = element_text(size = 7))
 ```
 
-La prueba ómnibus **no rechaza** la hipótesis nula: $\chi^2_F(`r esc$friedman_gl`) =$ `r num(esc$friedman_chi2, 1)`, $p =$ `r num(esc$friedman_p, 2)`. No hay evidencia de que alguna de las 48 combinaciones rinda distinto de las demás. Por el protocolo jerárquico, el análisis *post-hoc* sobre las 48 no procede; el gráfico se incluye solo como descripción: los rangos promedio van de `r num(min(rangos48$rango), 1)` a `r num(max(rangos48$rango), 1)` y la diferencia crítica de Nemenyi con 48 procedimientos y 10 bloques es de `r num(esc$cd48, 1)` rangos, así que todas las combinaciones caen dentro de la banda de "indistinguibles del mejor".
+La prueba ómnibus `r if (fr$p < 0.05) "rechaza" else "no rechaza"` la hipótesis nula: $\chi^2_F(`r fr$gl`) =$ `r num(fr$chi2, 1)`, $p =$ `r num_p(fr$p)`. `r if (fr$p >= 0.05) "No hay evidencia de que alguna de las 48 combinaciones rinda distinto de las demás. Por el protocolo jerárquico, el análisis *post-hoc* sobre las 48 no procede; el gráfico se incluye solo como descripción:" else "Hay evidencia de que no todas las combinaciones rinden igual, aunque con 48 procedimientos y 10 bloques el *post-hoc* tiene muy poca potencia:"` los rangos promedio van de `r num(min(rangos48$rango), 1)` a `r num(max(rangos48$rango), 1)` y la diferencia crítica de Nemenyi con 48 procedimientos y 10 bloques es de `r num(cd48, 1)` rangos, así que `r if (max(rangos48$rango) - min(rangos48$rango) < cd48) "todas las combinaciones caen dentro de la banda de \"indistinguibles del mejor\"" else "solo las combinaciones del final del ranking salen de la banda de \"indistinguibles del mejor\""`.
 
 ### Análisis por factor
 
 Con 48 procedimientos y 10 bloques la CD es enorme. El diseño factorial permite una pregunta más precisa: para estudiar un factor (modelo, balanceo u optimizador), cada combinación de los otros dos factores con cada pliegue forma un bloque. Así, por ejemplo, los cuatro optimizadores se comparan en 120 bloques (3 modelos × 4 balanceos × 10 pliegues) y la prueba gana mucha potencia. La salvedad es que los bloques que comparten pliegue no son del todo independientes.
 
 ```{r factores-mod, fig.width = 9, fig.height = 6, class.source = "fold-hide"}
-factores <- leer("friedman_factores.csv")
-rangos_f <- leer("rangos_factores.csv")
-nemenyi  <- leer("nemenyi_factores.csv")
+NIVELES <- list(modelo = MODELOS, balanceo = BALANCEOS, metodo = OPTIMIZADORES)
 NOMBRE_FACTOR <- c(modelo = "Modelo", balanceo = "Balanceo", metodo = "Optimizador")
+pruebas_f <- map(set_names(names(NIVELES)), function(f) {
+  r <- friedman(matriz_factor(pliegues, f, NIVELES[[f]]))
+  r$cd <- diferencia_critica(r$k, r$N)
+  r$nemenyi <- nemenyi(r$rangos, r$N)
+  r
+})
+factores <- map_dfr(names(pruebas_f), function(f) {
+  r <- pruebas_f[[f]]
+  tibble(factor = f, bloques = r$N, k = r$k, chi2 = r$chi2, gl = r$gl, p = r$p, cd = r$cd)
+})
+rangos_f <- map_dfr(names(pruebas_f), ~ tibble(factor = .x, nivel = names(pruebas_f[[.x]]$rangos),
+                                               rango = unname(pruebas_f[[.x]]$rangos)))
 fa <- function(f, col) factores[[col]][factores$factor == f]
 rg <- function(f, nivel) rangos_f$rango[rangos_f$factor == f & rangos_f$nivel == nivel]
-nm <- function(f, a, b) nemenyi$p[nemenyi$factor == f & nemenyi$nivel_a == a & nemenyi$nivel_b == b]
+nm <- function(f, a, b) pruebas_f[[f]]$nemenyi[a, b]
 
 d_factores <- rangos_f |>
   left_join(factores, by = "factor") |>
-  mutate(titulo = sprintf("%s: χ²(%d) = %s, p = %s · %d bloques", NOMBRE_FACTOR[factor], gl,
-                          num(chi2, 1), num(p, 3), bloques),
+  mutate(titulo = sprintf("%s: χ²(%d) = %s, p %s · %d bloques", NOMBRE_FACTOR[factor], gl,
+                          num(chi2, 1), p_txt(p), bloques),
          titulo = factor(titulo, levels = unique(titulo)),
          nivel = nombre(nivel)) |>
   group_by(titulo) |>
@@ -1025,38 +1320,67 @@ ggplot(d_factores, aes(rango, clave)) +
 
 factores |>
   transmute(Factor = NOMBRE_FACTOR[factor], Bloques = bloques, k, `χ²` = num(chi2, 2),
-            p = num(p, 4), CD = num(cd, 3)) |>
+            p = num_p(p), CD = num(cd, 3)) |>
   tabla_resultado("Prueba de Friedman por factor", align = c("l", rep("r", 5)))
 
 matriz_nemenyi <- function(f) {
-  niveles <- rangos_f$nivel[rangos_f$factor == f]
-  nemenyi |>
-    filter(factor == f) |>
-    mutate(nivel_a = factor(nombre(nivel_a), levels = nombre(niveles)),
-           nivel_b = factor(nombre(nivel_b), levels = nombre(niveles)), p = num(p, 4)) |>
-    arrange(nivel_a, nivel_b) |>
-    pivot_wider(id_cols = nivel_a, names_from = nivel_b, values_from = p) |>
-    rename(` ` = nivel_a)
+  niveles <- NIVELES[[f]]
+  m <- pruebas_f[[f]]$nemenyi[niveles, niveles]
+  as_tibble(matrix(num(m, 4), nrow(m), dimnames = list(NULL, nombre(niveles)))) |>
+    mutate(` ` = nombre(niveles), .before = 1)
 }
 tabla_resultado(matriz_nemenyi("modelo"), "p-valores de Nemenyi entre modelos")
 tabla_resultado(matriz_nemenyi("metodo"), "p-valores de Nemenyi entre optimizadores")
 ```
 
-Al estudiar cada factor por separado, con más bloques, aparece una señal en el modelo pero no en las otras dos decisiones:
+```{r valores-factores-mod, include = FALSE}
+# Nombre de un nivel dentro de una frase («sin balanceo», no «Sin balanceo»)
+en_frase <- function(x) ifelse(x %in% c("ninguno", "class_weight"), str_to_lower(nombre(x)), nombre(x))
+frase_factor <- function(f) {
+  r <- pruebas_f[[f]]
+  orden <- names(r$rangos)
+  sprintf("%s ($\\chi^2_F(%d) = %s$, $p %s$): el mejor rango promedio es el de %s (%s) y el peor el de %s (%s)",
+          NOMBRE_FACTOR[[f]], r$gl, gsub(",", "{,}", num(r$chi2, 1)), p_tex(r$p, 4),
+          en_frase(orden[1]), num(r$rangos[1]), en_frase(orden[length(orden)]),
+          num(r$rangos[length(orden)]))
+}
+pares_sig <- function(f) {
+  m <- pruebas_f[[f]]$nemenyi
+  idx <- which(upper.tri(m) & m < 0.05, arr.ind = TRUE)
+  if (!nrow(idx)) return("ninguna comparación de Nemenyi es significativa")
+  paste0("Nemenyi separa ", paste(sprintf("%s de %s ($p %s$)", en_frase(rownames(m)[idx[, 1]]),
+                                          en_frase(colnames(m)[idx[, 2]]), p_tex(m[idx], 4)),
+                                  collapse = "; "))
+}
+sig_f <- factores$factor[factores$p < 0.05]
+```
 
-- **Modelo** ($\chi^2_F(2) =$ `r num(fa("modelo", "chi2"), 1)`, $p =$ `r num(fa("modelo", "p"), 3)`): Random Forest tiene el mejor rango promedio (`r num(rg("modelo", "random_forest"))`, frente a `r num(rg("modelo", "logistica"))` de la logística y `r num(rg("modelo", "xgboost"))` de XGBoost). El post-hoc de Nemenyi lo separa de XGBoost por muy poco ($p =$ `r num(nm("modelo", "random_forest", "xgboost"), 4)`) y no de la logística ($p =$ `r num(nm("modelo", "random_forest", "logistica"), 3)`). Es una ventaja **consistente pero diminuta**: Random Forest gana más pliegues, por márgenes muy pequeños.
-- **Balanceo** ($\chi^2_F(3) =$ `r num(fa("balanceo", "chi2"), 1)`, $p =$ `r num(fa("balanceo", "p"), 2)`): no hay diferencias. "Sin balanceo" tiene el mejor rango, coherente con que el desbalance es leve.
-- **Optimizador** ($\chi^2_F(3) =$ `r num(fa("metodo", "chi2"), 1)`, $p =$ `r num(fa("metodo", "p"), 3)`): en el límite de la significancia. El genético tiene el peor rango (`r num(rg("metodo", "genetico"))`) y los otros tres son prácticamente iguales (`r num(rg("metodo", "grid"))`–`r num(rg("metodo", "random"))`); ninguna comparación de Nemenyi es significativa.
+Al estudiar cada factor por separado, con más bloques, la prueba gana potencia. `r if (length(sig_f)) paste0("Sale significativo: ", paste(NOMBRE_FACTOR[sig_f], collapse = " y "), ".") else "Ningún factor sale significativo."`
+
+- `r frase_factor("modelo")`. `r mayus(pares_sig("modelo"))`.
+- `r frase_factor("balanceo")`. `r mayus(pares_sig("balanceo"))`.
+- `r frase_factor("metodo")`. `r mayus(pares_sig("metodo"))`.
+
+Incluso cuando un factor sale significativo, la diferencia de rangos promedio es pequeña: significa que un nivel gana un poco más de la mitad de los enfrentamientos, por márgenes de AUC muy pequeños. Los tamaños del efecto de la sección siguiente lo cuantifican.
 
 ### Comparaciones dirigidas: DeLong sobre el conjunto de prueba
 
 Las tres comparaciones por pares entre los modelos finales se contrastan con la prueba de DeLong, que tiene en cuenta que las dos AUC se miden sobre los mismos pacientes (y por tanto están correlacionadas). Los p-valores se ajustan por Holm-Bonferroni y la diferencia de AUC se acompaña de un intervalo bootstrap BCa pareado.
 
 ```{r delong-mod, class.source = "fold-hide"}
-delong <- leer("delong.csv")
-delong |>
+PARES <- list(c("logistica", "random_forest"), c("logistica", "xgboost"),
+              c("random_forest", "xgboost"))
+delong_tab <- map_dfr(PARES, function(ab) {
+  dl <- delong(y_test, proba_test[[ab[1]]], proba_test[[ab[2]]])
+  ic <- ic_bootstrap(function(z) auc_roc(z$y, z$a) - auc_roc(z$y, z$b),
+                     data.frame(y = y_test, a = proba_test[[ab[1]]], b = proba_test[[ab[2]]]))
+  tibble(modelo_a = ab[1], modelo_b = ab[2], diferencia = dl$diferencia, ic_inf = ic[1],
+         ic_sup = ic[2], z = dl$z, p = dl$p)
+}) |>
+  mutate(p_holm = p.adjust(p, "holm"))
+delong_tab |>
   transmute(`Modelo A` = nombre(modelo_a), `Modelo B` = nombre(modelo_b),
-            `Diferencia de AUC (A − B)` = num(diferencia, 4),
+            `Diferencia de AUC (A − B)` = signo(diferencia, 4),
             `IC 95 % bootstrap BCa` = sprintf("[%s; %s]", num(ic_inf, 3), num(ic_sup, 3)),
             z = num(z, 3), `p crudo` = num(p, 4), `p ajustado (Holm)` = num(p_holm, 4)) |>
   tabla_resultado("Prueba de DeLong entre los modelos finales (conjunto de prueba)",
@@ -1065,10 +1389,18 @@ delong |>
 
 ### Intervalos de confianza y tamaño del efecto
 
-Los intervalos bootstrap BCa de la AUC en prueba de cada modelo final se complementan con el delta de Cliff, una medida no paramétrica de dominancia coherente con el uso de rangos: $\delta = P(A > B) - P(A < B)$, interpretado con los umbrales de Romano et al. (2006) (|δ| < 0,147 despreciable; < 0,33 pequeño; < 0,474 mediano; grande en otro caso). Se calcula sobre las AUC de los 10 pliegues externos de las combinaciones seleccionadas y, de forma agregada, sobre todos los pliegues de cada familia y de cada optimizador.
+Los intervalos bootstrap BCa de la AUC en prueba de cada modelo final se complementan con el delta de Cliff, una medida no paramétrica de dominancia coherente con el uso de rangos: $\delta = P(A > B) - P(A < B)$, interpretado con los umbrales de Romano et al. (2006) ($|\delta| < 0{,}147$ despreciable; $< 0{,}33$ pequeño; $< 0{,}474$ mediano; grande en otro caso). Se calcula sobre las AUC de los 10 pliegues externos de las combinaciones seleccionadas y, de forma agregada, sobre todos los pliegues de cada familia y de cada optimizador.
 
 ```{r ic-cliff-mod, class.source = "fold-hide"}
-ic_test <- leer("ic_test.csv")
+ic_test <- map_dfr(MODELOS, function(m) {
+  p <- proba_test[[m]]
+  map_dfr(list(list("AUC", function(z) auc_roc(z$y, z$p)),
+               list("Recall (GBM)", function(z) mean(z$p[z$y == 1] >= 0.5))), function(e) {
+    ic <- ic_bootstrap(e[[2]], data.frame(y = y_test, p = p))
+    tibble(modelo = m, metrica = e[[1]], estimacion = e[[2]](data.frame(y = y_test, p = p)),
+           ic_inf = ic[1], ic_sup = ic[2])
+  })
+})
 ic_test |>
   transmute(Modelo = nombre(modelo), `Métrica` = metrica, `Estimación` = num(estimacion, 3),
             `IC 95 %` = sprintf("[%s; %s]", num(ic_inf, 3), num(ic_sup, 3))) |>
@@ -1076,47 +1408,78 @@ ic_test |>
                   align = c("l", "l", "r", "r")) |>
   collapse_rows(columns = 1, valign = "top")
 
-cliff <- leer("cliff.csv")
+auc_sel <- map(set_names(MODELOS), function(m) {
+  pliegues$auc[pliegues$combo == id_combo(m, finales[[m]]$balanceo, finales[[m]]$metodo)]
+})
+cliff <- bind_rows(
+  map_dfr(PARES, function(ab) {
+    d1 <- delta_cliff(auc_sel[[ab[1]]], auc_sel[[ab[2]]])
+    d2 <- delta_cliff(pliegues$auc[pliegues$modelo == ab[1]], pliegues$auc[pliegues$modelo == ab[2]])
+    tibble(comparacion = paste(nombre(ab[1]), "vs", nombre(ab[2])), delta_sel = d1,
+           magnitud_sel = magnitud_cliff(d1), delta_familia = d2,
+           magnitud_familia = magnitud_cliff(d2))
+  }),
+  map_dfr(c("grid", "bayesiano", "genetico"), function(o) {
+    d2 <- delta_cliff(pliegues$auc[pliegues$metodo == o], pliegues$auc[pliegues$metodo == "random"])
+    tibble(comparacion = paste(nombre(o), "vs Random Search"), delta_sel = NA_real_,
+           magnitud_sel = "", delta_familia = d2, magnitud_familia = magnitud_cliff(d2))
+  })
+)
 cliff |>
   transmute(`Comparación` = comparacion,
             `δ combinaciones seleccionadas` = ifelse(is.na(delta_sel), "—",
-                                                     sprintf("%s (%s)", num(delta_sel, 3), magnitud_sel)),
-            `δ todas las combinaciones de la familia` = sprintf("%s (%s)", num(delta_familia, 3),
+                                                     sprintf("%s (%s)", signo(delta_sel, 3), magnitud_sel)),
+            `δ todas las combinaciones de la familia` = sprintf("%s (%s)", signo(delta_familia, 3),
                                                                 magnitud_familia)) |>
   tabla_resultado("Tamaño del efecto: delta de Cliff sobre las AUC de los pliegues externos",
                   align = c("l", "r", "r"))
+magnitudes <- setdiff(c(cliff$magnitud_sel, cliff$magnitud_familia), "")
+todo_despreciable <- all(magnitudes == "despreciable")
+magnitud_max <- magnitud_cliff(max(abs(c(cliff$delta_sel, cliff$delta_familia)), na.rm = TRUE))
 ic_auc <- ic_test |> filter(metrica == "AUC")
 ic_rec <- ic_test |> filter(metrica != "AUC")
 ```
 
-Ninguna comparación dirigida entre los modelos finales es significativa: las diferencias de AUC en prueba son de `r num(min(abs(delong$diferencia)), 3)` a `r num(max(abs(delong$diferencia)), 3)`, con p-valores de DeLong entre `r num(min(delong$p), 2)` y `r num(max(delong$p), 2)` (`r num(min(delong$p_holm), 1)` tras el ajuste de Holm), y los tres intervalos bootstrap de la diferencia contienen el cero con holgura. Los tamaños del efecto confirman que la cuestión no es solo de potencia: el delta de Cliff es **despreciable** ($|\delta| <$ `r num(max(abs(c(cliff$delta_sel, cliff$delta_familia)), na.rm = TRUE), 2)`) en todas las comparaciones entre modelos y entre optimizadores, tanto para las combinaciones seleccionadas como para todas las de cada familia. Incluso la ventaja de Random Forest que detectó Friedman por factores corresponde a un $\delta$ despreciable: Random Forest gana un poco más de la mitad de los enfrentamientos, por márgenes que no tienen relevancia práctica.
+Ninguna comparación dirigida entre los modelos finales es significativa: las diferencias de AUC en prueba son de `r num(min(abs(delong_tab$diferencia)), 3)` a `r num(max(abs(delong_tab$diferencia)), 3)`, con p-valores de DeLong entre `r num(min(delong_tab$p), 2)` y `r num(max(delong_tab$p), 2)` (`r if (min(delong_tab$p_holm) > 0.995) "1 en los tres casos" else paste(num(min(delong_tab$p_holm), 2), "o más")` tras el ajuste de Holm), y los tres intervalos bootstrap de la diferencia contienen el cero. Los tamaños del efecto confirman que la cuestión no es solo de potencia: el delta de Cliff es `r if (todo_despreciable) "despreciable" else paste("como mucho", magnitud_max)` ($|\delta| \le$ `r num(max(abs(c(cliff$delta_sel, cliff$delta_familia)), na.rm = TRUE), 2)`) en todas las comparaciones entre modelos y entre optimizadores, tanto para las combinaciones seleccionadas como para todas las de cada familia.
 
-La conclusión estadística es que, con estos datos, **los tres modelos son equivalentes en capacidad discriminativa**, con una AUC de prueba en torno a `r num(min(ic_auc$estimacion), 2)`–`r num(max(ic_auc$estimacion), 2)` (IC 95 % ≈ [`r num(mean(ic_auc$ic_inf), 2)`; `r num(mean(ic_auc$ic_sup), 2)`]) y un recall de GBM en torno al `r num(100 * min(ic_rec$estimacion), 0)`–`r num(100 * max(ic_rec$estimacion), 0)` % (IC 95 % ≈ [`r num(mean(ic_rec$ic_inf), 2)`; `r num(mean(ic_rec$ic_sup), 2)`]). La elección entre ellos debe hacerse por otros criterios: interpretabilidad, calibración, costo y estabilidad.
+La conclusión estadística es que, con estos datos, los tres modelos son equivalentes en capacidad discriminativa, con una AUC de prueba en torno a `r num(min(ic_auc$estimacion), 3)`–`r num(max(ic_auc$estimacion), 3)` (IC 95 % ≈ [`r num(mean(ic_auc$ic_inf), 2)`; `r num(mean(ic_auc$ic_sup), 2)`]) y un recall de GBM en torno al `r num(100 * min(ic_rec$estimacion), 0)`–`r num(100 * max(ic_rec$estimacion), 0)` % (IC 95 % ≈ [`r num(mean(ic_rec$ic_inf), 2)`; `r num(mean(ic_rec$ic_sup), 2)`]). La elección entre ellos debe hacerse por otros criterios: interpretabilidad, calibración, costo y estabilidad.
 
 ## ¿Cuántas variables hacen falta? Panel reducido {#panel-reducido}
 
-El objetivo general del proyecto es identificar el **subconjunto mínimo** de factores clínicos y mutaciones que conserva la capacidad de clasificar el grado tumoral, para evitar pruebas moleculares innecesarias. Para responderlo sin fuga de información, el ranking de variables se construye **dentro de cada pliegue externo**: se ajusta XGBoost con sus hiperparámetros finales sobre el pliegue de entrenamiento, se ordenan las variables por su |SHAP| medio en ese pliegue y se entrena el mejor procedimiento (`r nombre(esc$mejor_familia)`) con las $k$ primeras. La AUC se mide en el pliegue de validación, que no intervino en el ranking.
+El objetivo general del proyecto es identificar el subconjunto mínimo de factores clínicos y mutaciones que conserva la capacidad de clasificar el grado tumoral, para evitar pruebas moleculares innecesarias. Para responderlo sin fuga de información, el ranking de variables se construye dentro de cada pliegue externo: se ajusta XGBoost con sus hiperparámetros finales sobre el pliegue de entrenamiento, se ordenan las variables por su |SHAP| medio en ese pliegue y se entrena el mejor procedimiento (`r nombre(mejor)`) con las $k$ primeras. La AUC se mide en el pliegue de validación, que no intervino en el ranking.
 
 ```{r panel-mod, fig.width = 9, fig.height = 4.4, class.source = "fold-hide"}
-panel <- leer("panel_reducido.csv")
+panel_r <- en_cache("panel_reducido", function() curva_panel(finales, mejor, X_train, y_train),
+                    RECALCULAR)
+panel <- panel_r$panel |>
+  group_by(k) |>
+  summarise(auc_m = mean(auc), de = sd(auc), recall = mean(recall)) |>
+  rename(auc = auc_m)
 pk <- function(k_, col) panel[[col]][panel$k == k_]
-k_min <- esc$k_min
+# Regla de un error estándar: el k más pequeño cuya AUC media no es inferior a la
+# del modelo completo menos un error estándar (DE entre pliegues / raíz de 10)
+k_min <- min(panel$k[panel$auc >= pk(23, "auc") - pk(23, "de") / sqrt(K_EXTERNO)])
 
 ggplot(panel, aes(k, auc)) +
-  geom_ribbon(aes(ymin = auc - de, ymax = auc + de), fill = "#9085e9", alpha = 0.15) +
+  geom_ribbon(aes(ymin = auc - de, ymax = auc + de), fill = COLOR_MODELO_ID[[mejor]], alpha = 0.15) +
   geom_hline(yintercept = pk(23, "auc"), linetype = "dashed", color = "#5a6472") +
   geom_vline(xintercept = k_min, linetype = "dotted", color = TINTA) +
-  geom_line(color = "#9085e9", linewidth = 1) +
-  geom_point(color = "#9085e9", size = 2.6) +
+  geom_line(color = COLOR_MODELO_ID[[mejor]], linewidth = 1) +
+  geom_point(color = COLOR_MODELO_ID[[mejor]], size = 2.6) +
   annotate("text", x = k_min + 0.4, y = min(panel$auc), label = paste("k =", k_min),
            hjust = 0, size = 3.4, color = TINTA) +
   scale_x_continuous(breaks = panel$k) +
   labs(title = "AUC según el tamaño del panel (media ± DE, 10 pliegues externos)",
-       subtitle = "Línea discontinua: modelo con las 23 variables",
+       subtitle = sprintf("%s con las k primeras variables · línea discontinua: modelo con las 23",
+                          nombre(mejor)),
        x = "Número de variables k (ranking SHAP dentro de cada pliegue)",
        y = "AUC del pliegue externo")
 
-frecuencia <- leer("panel_frecuencia.csv")
+rankings <- panel_r$rankings
+frecuencia <- tibble(variable = unlist(map(rankings, ~ .x[seq_len(k_min)]))) |>
+  count(variable, name = "pliegues") |>
+  mutate(posicion_media = map_dbl(variable, function(v) mean(map_int(rankings, ~ which(.x == v))))) |>
+  arrange(desc(pliegues), posicion_media)
 frecuencia |>
   transmute(Variable = variable, !!sprintf("Pliegues en que entra al top-%d", k_min) := pliegues,
             `Posición media en el ranking` = num(posicion_media, 1)) |>
@@ -1125,29 +1488,54 @@ frecuencia |>
 panel |>
   transmute(k, AUC = num(auc, 4), DE = num(de, 4), `Recall (GBM)` = num(recall, 4)) |>
   tabla_resultado("AUC y recall según el número de variables", align = rep("r", 4))
-variables_panel <- paste0("`", frecuencia$variable, "`")
+variables_panel <- paste0("`", frecuencia$variable[seq_len(min(k_min, nrow(frecuencia)))], "`")
+estable <- all(map_lgl(rankings, ~ setequal(.x[seq_len(k_min)], rankings[[1]][seq_len(k_min)])))
+umbral_panel <- pk(23, "auc") - pk(23, "de") / sqrt(K_EXTERNO)
+k_prev <- max(panel$k[panel$k < k_min])
+# El panel más pequeño que más se acerca al umbral sin alcanzarlo
+cerca <- panel |> filter(k < k_min) |> slice_max(auc, n = 1, with_ties = FALSE)
+falta_cerca <- umbral_panel - cerca$auc
+vars_k <- frecuencia$variable[seq_len(k_min)]
+genes_panel <- vars_k[vars_k %in% GENES]
+# Variables del panel que el EDA no destacaba entre las de mayor asociación
+extras_panel <- setdiff(vars_k, c("Age_at_diagnosis", "IDH1", "PTEN", "TP53", "ATRX", "CIC", "EGFR"))
 ```
 
-La curva responde a la pregunta central del proyecto. **`r str_to_sentence(c("una", "dos", "tres", "cuatro", "cinco", "seis")[k_min])` variables bastan**: con `r paste(variables_panel, collapse = ", ")` el modelo alcanza una AUC de `r num(pk(k_min, "auc"), 3)` ± `r num(pk(k_min, "de"), 3)`, frente a `r num(pk(23, "auc"), 3)` ± `r num(pk(23, "de"), 3)` con las 23; según la regla de un error estándar (el $k$ más pequeño cuya AUC media no es inferior a la del modelo completo menos un error estándar), $k =$ `r k_min` es el panel más pequeño indistinguible del completo. Añadir las otras `r 23 - k_min` variables mejora la AUC en `r num(pk(23, "auc") - pk(k_min, "auc"), 3)`, una cantidad muy inferior a la variación entre pliegues. Por debajo de `r k_min` variables la pérdida sí es clara: solo con `IDH1` la AUC es `r num(pk(1, "auc"), 3)`, y con `IDH1` y la edad, `r num(pk(2, "auc"), 3)`.
+La curva responde a la pregunta central del proyecto. `r str_to_sentence(NUMEROS[k_min])` variables bastan: con `r lista_y(variables_panel)` el modelo alcanza una AUC de `r num(pk(k_min, "auc"), 3)` ± `r num(pk(k_min, "de"), 3)`, frente a `r num(pk(23, "auc"), 3)` ± `r num(pk(23, "de"), 3)` con las 23; según la regla de un error estándar (el $k$ más pequeño cuya AUC media no es inferior a la del modelo completo menos un error estándar), $k =$ `r k_min` es el panel más pequeño indistinguible del completo. Añadir las otras `r 23 - k_min` variables cambia la AUC en `r signo(pk(23, "auc") - pk(k_min, "auc"), 3)`, una cantidad muy inferior a la variación entre pliegues. El umbral de la regla es `r num(umbral_panel, 4)` y ningún panel más pequeño lo alcanza: el que más se acerca es el de `r NUMEROS[cerca$k]` `r if (cerca$k == 1) "variable" else "variables"` (`r num(cerca$auc, 4)`), `r if (falta_cerca < 0.001) "a menos de una milésima" else paste("a", num(falta_cerca, 4))`. La ganancia grande ocurre con las primeras variables: solo con la primera la AUC es `r num(pk(1, "auc"), 3)`, y con las dos primeras, `r num(pk(2, "auc"), 3)`.
 
-El panel es además muy estable: las mismas `r k_min` variables, en el mismo orden, ocupan los primeros puestos del ranking en los 10 pliegues externos, aunque cada ranking se calculó sin ver los datos de validación. Coincide con las variables de mayor asociación del EDA, salvo que `TP53` sustituye a `ATRX` y `CIC`, cuya información queda en buena parte contenida en `IDH1` y `TP53`.
+El panel es `r if (estable) "además muy estable: las mismas" else "bastante estable:"` `r if (estable) paste(NUMEROS[k_min], "variables ocupan los primeros puestos del ranking en los 10 pliegues externos") else paste0("las variables del panel entran en el top-", k_min, " en la mayoría de los 10 pliegues externos (tabla de arriba)")`, aunque cada ranking se calculó sin ver los datos de validación. Coincide con las variables de mayor asociación del EDA, salvo que `TP53` aparece por su efecto condicional y `ATRX` y `CIC` quedan fuera, porque su información está en buena parte contenida en `IDH1` y `TP53``r if (length(extras_panel)) paste0(", y que entra", if (length(extras_panel) > 1) "n " else " ", lista_y(paste0("\x60", extras_panel, "\x60")), ", cuyo efecto aparece en combinación con las demás variables") else ""`.
 
-En términos prácticos, la clasificación LGG/GBM que logra un panel de 20 genes se obtiene casi igual con la edad del paciente y el estado mutacional de tres genes (`IDH1`, `TP53`, `PTEN`), que pueden evaluarse con un panel dirigido o, en el caso de `IDH1` R132H, con inmunohistoquímica.
+En términos prácticos, la clasificación LGG/GBM que logra un panel de 20 genes se obtiene casi igual con `r if ("Age_at_diagnosis" %in% vars_k) "la edad del paciente y" else ""` el estado mutacional de `r NUMEROS[length(genes_panel)]` genes (`r lista_y(paste0("\x60", genes_panel, "\x60"))`), que pueden evaluarse con un panel dirigido o, en el caso de `IDH1` R132H, con inmunohistoquímica.
+
+```{r exportar-shiny-mod, include = FALSE}
+# Modelos y resumen para la app Shiny (shinyapp/Gliomas_app/data). Se escriben
+# en cada compilación si la app está junto al libro: así la app usa siempre los
+# modelos que describe el capítulo.
+if (EXPORTAR_SHINY && dir.exists(dirname(DIR_SHINY))) {
+  datos_shiny <- list(resumen = resumen, pliegues = pliegues, oof = oof, y_test = y_test,
+                      y_train = y_train, X_train = X_train, X_test = X_test,
+                      id_test = datos$id_test, proba_test = proba_test)
+  exportar_shiny(finales, datos_shiny, DIR_SHINY, bloques = bloques, recal = recal,
+                 semillas = semillas_t, importancia = importancia, panel_resumen = panel,
+                 historiales = historiales, k_min = k_min,
+                 variables_panel = frecuencia$variable[seq_len(k_min)])
+}
+```
 
 ## Conclusiones del modelado
 
-1. **El grado del glioma se predice bien con variables clínicas y mutacionales.** Los tres modelos alcanzan una AUC de `r num(min(finales$auc_media), 2)` en validación anidada y de `r num(min(ic_auc$estimacion), 2)`–`r num(max(ic_auc$estimacion), 2)` en el conjunto de prueba, con un recall de GBM del `r num(100 * min(ic_rec$estimacion), 0)`–`r num(100 * max(ic_rec$estimacion), 0)` %. La AUC de prueba coincide con la estimación de la validación anidada, de modo que el procedimiento no sobreestimó el desempeño.
+1. El grado del glioma se predice bien con variables clínicas y mutacionales. Los tres modelos alcanzan una AUC de `r num(min(seleccion$auc_media), 3)`–`r num(max(seleccion$auc_media), 3)` en validación anidada y de `r num(min(ic_auc$estimacion), 3)`–`r num(max(ic_auc$estimacion), 3)` en el conjunto de prueba, con un recall de GBM del `r num(100 * min(ic_rec$estimacion), 0)`–`r num(100 * max(ic_rec$estimacion), 0)` %. La AUC de prueba es coherente con la estimación de la validación anidada, de modo que el procedimiento no sobreestimó el desempeño.
 
-2. **Los tres modelos son estadísticamente equivalentes.** La prueba de Friedman no detecta diferencias entre las 48 combinaciones ($p =$ `r num(esc$friedman_p, 2)`), DeLong no distingue entre los modelos finales ($p_\text{Holm} = 1$) y todos los tamaños de efecto son despreciables. La variación entre pliegues (DE ≈ `r num(esc$de_dentro, 2)`) es `r num(esc$de_dentro / esc$de_entre, 0)` veces mayor que la variación entre procedimientos.
+2. Los tres modelos son estadísticamente equivalentes. La prueba de Friedman `r if (fr$p >= 0.05) "no detecta diferencias" else "detecta diferencias muy pequeñas"` entre las 48 combinaciones ($p =$ `r num_p(fr$p)`), DeLong no distingue entre los modelos finales (`r if (min(delong_tab$p_holm) > 0.995) "$p_\\text{Holm} = 1$" else paste0("$p_\\text{Holm} \\geq ", gsub(",", "{,}", num(min(delong_tab$p_holm), 2)), "$")`) y `r if (todo_despreciable) "todos los tamaños de efecto son despreciables" else paste0("los tamaños de efecto son a lo sumo ", magnitud_max, "s")`. La variación entre pliegues (DE ≈ `r num(de_dentro, 2)`) es `r num(de_dentro / de_entre, 0)` veces mayor que la variación entre procedimientos.
 
-3. **Si hay que elegir uno, la regresión logística con regularización L1.** Ante modelos equivalentes en discriminación decide el resto: la logística es estable ante la semilla, está razonablemente calibrada (y la recalibración isotónica la deja casi perfecta), se entrena en milisegundos, descarta por sí misma `r length(anuladas)` de las 23 variables y sus coeficientes tienen lectura directa. XGBoost es la alternativa si se quieren captar efectos no lineales de la edad, y Random Forest requiere recalibrar sus probabilidades.
+3. Si hay que elegir uno, la regresión logística. Ante modelos equivalentes en discriminación decide el resto: la logística es estable ante la semilla, está razonablemente calibrada`r if (rl_mejora) paste0(" (y la recalibración con ", sub("^(el|la) ", "", metodo_frase[mejor_recal$Metodo[mejor_recal$Modelo == "Regresión Logística"]]), " la mejora)") else ""`, se entrena en milisegundos y sus coeficientes tienen lectura directa. XGBoost es la alternativa si se quieren captar efectos no lineales de la edad`r if (peor_recal$Metodo == "Sin recalibrar") paste0(", y si se usan las probabilidades de ", peor_nombre, ", el peor calibrado, conviene revisar su calibración: ninguna de las dos recalibraciones probadas la mejoró en prueba") else paste0(", y ", peor_nombre, " conviene recalibrarlo si se usan sus probabilidades")`.
 
-4. **El balanceo no mejora la discriminación.** Con un desbalance de 1,38:1, SMOTE-NC, ADASYN y `class_weight` solo desplazan el punto de operación hacia más recall. `class_weight` lo hace sin costo adicional; SMOTE-NC multiplica el tiempo de cómputo.
+4. El balanceo no mejora la discriminación. Con un desbalance de 1,38:1, SMOTE-NC, ADASYN y los pesos de clase solo desplazan el punto de operación hacia más recall. Los pesos de clase lo hacen sin costo adicional; SMOTE-NC multiplica el tiempo de cómputo.
 
-5. **La optimización bayesiana es el método más eficiente.** TPE llega antes a buenas soluciones que Random y Grid Search, con diferencias pequeñas pero significativas. El algoritmo genético encuentra soluciones internas igual de buenas, pero sufre convergencia prematura y sobreajusta el bucle interno, con la peor AUC externa. *Successive Halving* y *early stopping* no aportan con datos de este tamaño, donde cada ajuste es barato.
+5. Los optimizadores llegan al mismo sitio. `r nombre(mas_rapido)` es el que antes llega a buenas soluciones (mayor área *anytime*), pero con 24 evaluaciones los cuatro alcanzan AUC internas casi iguales y sus AUC externas difieren en milésimas. El bayesiano paga además el ajuste de su proceso gaussiano en cada paso, que aquí cuesta más que los propios modelos; el genético sufre convergencia prematura con una población tan pequeña. *Successive Halving* y *early stopping* no aportan con datos de este tamaño, donde cada ajuste es barato.
 
-6. **`r str_to_sentence(c("una", "dos", "tres", "cuatro", "cinco", "seis")[k_min])` variables bastan.** `r paste(variables_panel, collapse = ", ")` conservan prácticamente toda la capacidad discriminativa del panel completo (AUC `r num(pk(k_min, "auc"), 3)` frente a `r num(pk(23, "auc"), 3)`), y aparecen como las primeras en los 10 pliegues. Es la respuesta al objetivo general del proyecto: un panel reducido de tres genes más la edad permitiría clasificar el grado tumoral casi con la misma precisión que los 20 genes.
+6. `r str_to_sentence(NUMEROS[k_min])` variables bastan. `r lista_y(variables_panel)` conservan prácticamente toda la capacidad discriminativa del panel completo (AUC `r num(pk(k_min, "auc"), 3)` frente a `r num(pk(23, "auc"), 3)`). Es la respuesta al objetivo general del proyecto: un panel reducido permitiría clasificar el grado tumoral casi con la misma precisión que los 20 genes.
 
-7. **Los errores tienen una lectura clínica.** El peor error del modelo es un GBM con `IDH1`, `TP53` y `ATRX` mutados en un adulto joven, el perfil de un astrocitoma `IDH`-mutado de grado 4, que la clasificación de la OMS de 2021 ya separa del glioblastoma. Distinguir este subgrupo requeriría variables que el dataset no incluye.
+7. Los errores tienen una lectura clínica. El peor error del modelo es un `r ifelse(info_mal$real == 1, "GBM", "LGG")` de `r num(loc(id_mal, "Age_at_diagnosis", "valor"), 0)` años con `r mutados(id_mal)`. `r if (info_mal$real == 1 && idh1_mal) "Es el perfil de un astrocitoma \x60IDH\x60-mutado de grado 4, que la clasificación de la OMS de 2021 ya separa del glioblastoma." else "Su perfil se parece más al del otro grado."` Distinguir estos casos requeriría variables que el dataset no incluye.
 
-**Limitaciones.** La cohorte es pequeña (839 pacientes, 168 de prueba) y predominantemente blanca (91 %), lo que limita la generalización a otras poblaciones. Las etiquetas siguen la clasificación histológica previa a 2021. Las comparaciones por factor usan bloques que comparten pliegue y no son del todo independientes. Por último, imbalanced-learn y Optuna se ejecutaron desde sus ramas de desarrollo; las versiones publicadas fijadas en `requirements-modelado.txt` tienen la misma API.
+Limitaciones. La cohorte es pequeña (839 pacientes, 168 de prueba) y predominantemente blanca (91 %), lo que limita la generalización a otras poblaciones. Las etiquetas siguen la clasificación histológica previa a 2021. Las comparaciones por factor usan bloques que comparten pliegue y no son del todo independientes. `r if (falta_cerca < 0.002) paste0("El tamaño del panel depende del criterio: con ", NUMEROS[cerca$k], " variables la AUC queda a ", num(falta_cerca, 4), " del umbral de la regla de un error estándar, así que un panel de ", NUMEROS[cerca$k], " sería casi igual de defendible. ") else ""`Por último, los resultados dependen de las versiones de los paquetes (tabla de entorno al inicio del capítulo): `xgboost`, `ranger` y `themis` pueden cambiar sus valores por defecto o su generador aleatorio entre versiones, y con ellos las cifras exactas, aunque no las conclusiones.

@@ -2,3 +2,9 @@
 .Rhistory
 .RData
 .Ruserdata
+
+# Copias locales de consulta (no se versionan)
+_versiones_guardadas/
+
+# Datos de despliegue de shinyapps.io (cuenta e identificador de la app)
+shinyapp/Gliomas_app/rsconnect/

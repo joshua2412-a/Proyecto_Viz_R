@@ -77,7 +77,8 @@ num <- function(x, d = 2) {
   formatC(unname(x), format = "f", digits = d, big.mark = ".", decimal.mark = ",")
 }
 num_p <- function(p) {
-  if (p < 1e-4) sub(".", ",", formatC(p, format = "e", digits = 2), fixed = TRUE) else num(p, 4)
+  p <- unname(p)
+  ifelse(p < 1e-4, sub(".", ",", formatC(p, format = "e", digits = 2), fixed = TRUE), num(p, 4))
 }
 
 # Tabla de resultados con el estilo común del libro (encabezado azul)
@@ -764,6 +765,11 @@ tabla_gender_grade <- table(train_data$Gender, train_data$Grade)
 chi2_gender     <- chisq.test(tabla_gender_grade)                  # con corrección de Yates
 chi2_gender_sin <- chisq.test(tabla_gender_grade, correct = FALSE)  # para la V de Cramér
 v_cramer_gender <- sqrt(unname(chi2_gender_sin$statistic) / sum(tabla_gender_grade))
+# La misma V con la corrección de sesgo de Bergsma, la que usa la tabla de asociación
+# de cada predictora con Grade (en una tabla 2x2, phi² - 1/(n-1) sobre 1 - 1/(n-1)).
+n_gender <- sum(tabla_gender_grade)
+v_cramer_gender_corr <- sqrt(max(0, v_cramer_gender^2 - 1 / (n_gender - 1)) /
+                               (1 - 1 / (n_gender - 1)))
 
 tibble(
   Medida = c("χ² de Pearson (con corrección de Yates)", "Grados de libertad", "p-valor",
@@ -776,7 +782,7 @@ tibble(
   column_spec(2, bold = TRUE)
 ```
 
-El estadístico obtenido es $\chi^2(1) =$ `r num(chi2_gender$statistic, 4)`, con un p-valor de `r num(chi2_gender$p.value, 4)`. Como p > 0,05, no se rechaza la hipótesis nula: no hay evidencia de asociación entre `Gender` y `Grade` en el conjunto de entrenamiento. La V de Cramér (`r num(v_cramer_gender, 2)`) apunta en la misma dirección, porque incluso la diferencia observada entre grupos sería despreciable. El supuesto de la prueba se cumple holgadamente: la frecuencia esperada más baja es `r num(min(chi2_gender$expected), 1)`.
+El estadístico obtenido es $\chi^2(1) =$ `r num(chi2_gender$statistic, 4)`, con un p-valor de `r num(chi2_gender$p.value, 4)`. Como p > 0,05, no se rechaza la hipótesis nula: no hay evidencia de asociación entre `Gender` y `Grade` en el conjunto de entrenamiento. La V de Cramér (`r num(v_cramer_gender, 2)` sin corrección de sesgo; `r num(v_cramer_gender_corr, 2)` con la corrección de Bergsma, la que usa la tabla de asociación más adelante) apunta en la misma dirección, porque incluso la diferencia observada entre grupos sería despreciable. El supuesto de la prueba se cumple holgadamente: la frecuencia esperada más baja es `r num(min(chi2_gender$expected), 1)`.
 
 ### `Grade` - `Race`
 
@@ -1411,7 +1417,7 @@ El análisis bivariado y de correlación de Spearman sobre el conjunto de entren
 
 **Asociaciones con GBM.** `Age_at_diagnosis` constituye el principal correlato clínico directo con la severidad ($r = +0,53$), lo que refleja una mayor frecuencia de GBM en edades avanzadas. Entre las variables genéticas, `PTEN` presenta la asociación más fuerte ($V = 0,3654$, $r = +0,37$), seguido de `EGFR` ($V = 0,2059$, $r = +0,21$) y `RB1` ($V = 0,1794$, $r = +0,18$).
 
-**Variables sin asociación significativa.** Las variables con $p > 0,05$ en la prueba de Chi-cuadrado, valores de $V < 0,08$ y magnitudes de $\lvert r \rvert < 0,10$, entre ellas `PDGFRA`, `NF1`, `Gender`, `CSMD3`, `BCOR`, `PIK3CA` y `FAT4`, presentan asociaciones débiles o insignificantes con `Grade`. Estos resultados respaldan su exclusión como variables prioritarias en la selección del conjunto de predictores.
+**Variables sin asociación significativa.** Las variables con $p > 0,05$ en la prueba de Chi-cuadrado, valores de $V < 0,08$ y magnitudes de $\lvert r \rvert < 0,10$, entre ellas `PDGFRA`, `NF1`, `Gender`, `CSMD3`, `BCOR`, `PIK3CA` y `FAT4`, presentan asociaciones débiles o insignificantes con `Grade`. Estos resultados respaldan su exclusión como variables prioritarias en la selección del conjunto de predictores, con una salvedad: es un cribado variable a variable, y alguna de ellas puede aportar en combinación con otras (en el capítulo \@ref(modelado), `NF1` aparece entre las variables con más peso de los modelos).
 
 ### Interacciones entre variables genéticas
 

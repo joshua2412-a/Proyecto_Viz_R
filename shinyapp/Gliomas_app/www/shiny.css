@@ -1,0 +1,323 @@
+/* ==========================================================================
+   Ajustes para Shiny
+
+   www/style.css es la hoja del tablero de Dash, sin tocar: así las dos
+   versiones se ven igual y un cambio de paleta se hace en un solo sitio. Esta
+   hoja solo traduce a los controles de Shiny (selectize, ionRangeSlider,
+   radioButtons, checkboxGroupInput y tabsetPanel) los estilos que allí se
+   escribieron para los de Dash.
+   ========================================================================== */
+
+/* Los controles de Shiny traen margen inferior propio; dentro de las
+   tarjetas de controles lo pone la rejilla */
+.controles-card .form-group,
+.controles-card .shiny-input-container {
+  margin-bottom: 0;
+  width: 100%;
+}
+
+.shiny-input-container > label:empty,
+.shiny-input-container > .control-label:empty {
+  display: none;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Selector (selectize) con el aspecto de los dcc.Dropdown                     */
+/* -------------------------------------------------------------------------- */
+.selector-variable .selectize-input,
+.selector-variable select.form-select,
+.selector-variable select.form-control {
+  background: #ffffff;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  color: var(--ink);
+  box-shadow: none;
+  min-height: 38px;
+}
+
+.selector-variable .selectize-input:hover {
+  border-color: var(--accent);
+}
+
+.selector-variable .selectize-input.focus,
+.selector-variable select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(20, 27, 77, 0.16);
+}
+
+.selector-variable .selectize-dropdown {
+  z-index: 30;
+  border-color: var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+}
+
+.selector-variable .selectize-dropdown .active {
+  background: var(--accent-tint);
+  color: var(--ink);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Botones de radio (.ambito-radio) como controles segmentados                 */
+/* Marcado de Shiny: label.radio-inline > input + span                         */
+/* -------------------------------------------------------------------------- */
+.ambito-radio .shiny-input-container {
+  margin: 0;
+  width: auto;
+}
+
+.ambito-radio .shiny-options-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.ambito-radio .radio-inline,
+.ambito-radio .form-check-inline {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 !important;
+  padding: 7px 16px;
+  border-radius: 999px;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.ambito-radio input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ambito-radio .radio-inline:has(input:checked),
+.ambito-radio .form-check-inline:has(input:checked) {
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.ambito-radio.segmentado-oscuro .radio-inline,
+.ambito-radio.segmentado-oscuro .form-check-inline {
+  color: #c9cff0;
+}
+
+.ambito-radio.segmentado-oscuro .radio-inline:has(input:checked),
+.ambito-radio.segmentado-oscuro .form-check-inline:has(input:checked) {
+  background: #ffffff;
+  color: var(--accent);
+}
+
+.formulario-prediccion .ambito-radio {
+  background: #ffffff;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Genes del formulario como fichas que se encienden                          */
+/* Marcado de Shiny: label.checkbox-inline > input + span > span.chip-gen     */
+/* -------------------------------------------------------------------------- */
+.chips-genes .shiny-input-container {
+  margin: 0;
+}
+
+.chips-genes .shiny-options-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.chips-genes .checkbox-inline,
+.chips-genes .form-check-inline {
+  position: relative;
+  margin: 0;
+  padding: 0;
+}
+
+.chips-genes input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  margin: 0;
+}
+
+.chips-genes input[type="checkbox"]:checked + span > .chip-gen {
+  background: var(--accent);
+  color: #ffffff;
+  animation: encender 0.32s ease-out both;
+}
+
+.chips-genes input[type="checkbox"]:checked + span > .chip-gen::before {
+  content: "check";
+  font-family: "Material Symbols Rounded";
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.chips-genes input[type="checkbox"]:focus-visible + span > .chip-gen {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(1) input:checked + span > .chip-gen { animation-delay: 55ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(2) input:checked + span > .chip-gen { animation-delay: 110ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(3) input:checked + span > .chip-gen { animation-delay: 165ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(4) input:checked + span > .chip-gen { animation-delay: 220ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(5) input:checked + span > .chip-gen { animation-delay: 275ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(6) input:checked + span > .chip-gen { animation-delay: 330ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(7) input:checked + span > .chip-gen { animation-delay: 385ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(8) input:checked + span > .chip-gen { animation-delay: 440ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(9) input:checked + span > .chip-gen { animation-delay: 495ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(10) input:checked + span > .chip-gen { animation-delay: 550ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(11) input:checked + span > .chip-gen { animation-delay: 605ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(12) input:checked + span > .chip-gen { animation-delay: 660ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(13) input:checked + span > .chip-gen { animation-delay: 715ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(14) input:checked + span > .chip-gen { animation-delay: 770ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(15) input:checked + span > .chip-gen { animation-delay: 825ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(16) input:checked + span > .chip-gen { animation-delay: 880ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(17) input:checked + span > .chip-gen { animation-delay: 935ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(18) input:checked + span > .chip-gen { animation-delay: 990ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(19) input:checked + span > .chip-gen { animation-delay: 1045ms; }
+.cargando-perfil .chips-genes .checkbox-inline:nth-child(20) input:checked + span > .chip-gen { animation-delay: 1100ms; }
+
+/* -------------------------------------------------------------------------- */
+/* Deslizadores (ionRangeSlider) en azul tinta                                */
+/* -------------------------------------------------------------------------- */
+.irs--shiny .irs-line {
+  background: #dde0f0;
+  border: 0;
+}
+
+.irs--shiny .irs-bar {
+  background: var(--accent);
+  border-top-color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.irs--shiny .irs-handle {
+  border: 3px solid var(--accent);
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(15, 30, 51, 0.18);
+}
+
+.irs--shiny .irs-single,
+.irs--shiny .irs-from,
+.irs--shiny .irs-to {
+  background: var(--accent);
+  font-size: 0.78rem;
+}
+
+.irs--shiny .irs-grid-text {
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+}
+
+/* En el formulario la edad ya se lee grande junto a su etiqueta */
+.slider-app .irs-single,
+.slider-app .irs-min,
+.slider-app .irs-max {
+  display: none;
+}
+
+.form-campo .shiny-input-container {
+  margin-bottom: 0;
+  width: 100%;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Subpestañas (tabsetPanel) como control segmentado                          */
+/* -------------------------------------------------------------------------- */
+.sub-tabs-shiny .nav-tabs {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 4px;
+  margin-bottom: 22px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(20, 27, 77, 0.06);
+}
+
+.sub-tabs-shiny .nav-tabs .nav-item {
+  margin: 0;
+}
+
+.sub-tabs-shiny .nav-tabs .nav-link {
+  border: 0 !important;
+  border-radius: 999px !important;
+  padding: 8px 18px !important;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--ink-soft) !important;
+  background: transparent !important;
+  white-space: nowrap;
+  transition: color 0.16s ease, background 0.16s ease;
+}
+
+.sub-tabs-shiny .nav-tabs .nav-link:hover {
+  color: var(--ink) !important;
+  background: rgba(255, 255, 255, 0.6) !important;
+}
+
+.sub-tabs-shiny .nav-tabs .nav-link.active {
+  color: #ffffff !important;
+  background: var(--accent) !important;
+  box-shadow: none;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Navegación: los <a href="#"> de las pestañas no deben subrayarse           */
+/* -------------------------------------------------------------------------- */
+.main-tabs .nav-link,
+.footer-link,
+.boton-libro {
+  text-decoration: none;
+}
+
+/* Los botones con data-ir que van dentro de un texto se leen como enlace */
+.callout-text .btn-link {
+  font-size: inherit;
+  text-decoration: none;
+  vertical-align: baseline;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Gráficos y recálculo                                                       */
+/* -------------------------------------------------------------------------- */
+.graph .plotly.html-widget {
+  width: 100% !important;
+}
+
+/* Mientras Shiny recalcula una salida, se atenúa en vez de quedarse quieta */
+.recalculating {
+  opacity: 0.55;
+  transition: opacity 0.2s ease;
+}
+
+/* MathJax: las fórmulas centradas dentro del bloque */
+.formula-block .MathJax_Display,
+.formula-block mjx-container {
+  margin: 0.4rem 0 !important;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Botones de Shiny con el aspecto del tablero                                 */
+/* -------------------------------------------------------------------------- */
+.btn.boton-predecir,
+.btn.boton-secundario {
+  box-shadow: none;
+}
+
+.btn.boton-predecir:focus-visible,
+.btn.boton-secundario:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Las secciones de "Cómo decide" que no tocan quedan fuera del flujo */
+.shiny-panel-conditional:empty {
+  display: none;
+}

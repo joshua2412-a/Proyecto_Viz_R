@@ -1,6 +1,5 @@
 ---
 title: "Caracterización Clínico-Molecular del Grado Tumoral en Gliomas"
-subtitle: "Optimización del Diagnóstico de Gliomas mediante Ciencia de Datos y Visualización de Datos"
 author: "Alejandro Cantillo Escorcia & Joshua Hincapie Llorente"
 date: "`r Sys.Date()`"
 site: bookdown::bookdown_site
@@ -43,7 +42,7 @@ La fase de modelado traduce estos hallazgos en clasificadores predictivos: regre
 
 - Entrenar regresión logística, Random Forest y XGBoost con validación cruzada anidada, comparar técnicas de balanceo y de optimización de hiperparámetros, evaluar discriminación, calibración e interpretabilidad, y determinar con pruebas estadísticas si las diferencias entre modelos son reales.
 
-- Presentar los resultados del análisis exploratorio mediante un Jupyter Book y recursos de visualización interactiva que permitan consultar y explorar los principales hallazgos sin necesidad de acceder directamente al código.
+- Presentar el análisis exploratorio y el modelado en este libro y en una aplicación interactiva que permitan consultar y explorar los principales hallazgos, y probar los modelos, sin necesidad de acceder directamente al código.
 
 
 
@@ -60,9 +59,11 @@ La fase de modelado traduce estos hallazgos en clasificadores predictivos: regre
 
 **Dashboard interactivo**
 
-El análisis de este libro tiene una contraparte interactiva: un tablero en Shiny
-que recorre el planteamiento del problema, el marco teórico, la metodología y los
-resultados del EDA con gráficos navegables. Está desplegado en: **COMPLETAR**
+El análisis de este libro tiene una contraparte interactiva: una aplicación en
+Shiny que recorre el planteamiento del problema, el marco teórico, la metodología,
+los resultados del EDA y los tres modelos del capítulo de modelado (con un
+simulador de predicción), y que usa los mismos modelos que se entrenan en este
+libro. Está desplegada en <https://u969n1-joshua-hincapie.shinyapps.io/Gliomas_app/> y su código está en la carpeta `shinyapp/Gliomas_app` del repositorio.
 
 ```{r include=FALSE}
 # automatically create a bib database for R packages
