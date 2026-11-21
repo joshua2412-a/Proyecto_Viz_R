@@ -8,7 +8,8 @@
      1. pinta al instante el estado de la navegación (pestaña activa, índice,
         barra de progreso, vecinos, barra superior fina), sin esperar al
         servidor, que es lo que en Dash hacían los callbacks de cliente;
-     2. avisa a Shiny con input$pestana, y el servidor monta el contenido;
+     2. pone a la vista la pestaña (todas están ya en la página, ver ui.R) y
+        avisa a Shiny con input$pestana;
      3. vuelve arriba de la página, para no dejar al visitante a media pestaña.
 
    El orden y los nombres llegan en el JSON #datos-navegacion, que se genera
@@ -81,10 +82,35 @@
     vecino("indice-siguiente", posicion + 1, "Fin", false);
   }
 
+  // Pasa la pestaña a #contenido-pestana y devuelve la anterior a
+  // #pestanas-guardadas (oculto). Mover los nodos, en vez de mostrarlos y
+  // ocultarlos en su sitio, mantiene la estructura que leen banda.js y el
+  // resto (#contenido-pestana .vista-pestana...), y los gráficos ya dibujados
+  // siguen dibujados.
+  function mostrar(destino) {
+    var contenido = document.getElementById("contenido-pestana");
+    var guardadas = document.getElementById("pestanas-guardadas");
+    var panel = document.querySelector('.pestana-panel[data-pestana="' + destino + '"]');
+    if (!contenido || !guardadas || !panel || panel.parentNode === contenido) return;
+    while (contenido.firstElementChild) guardadas.appendChild(contenido.firstElementChild);
+    contenido.appendChild(panel);
+    // Shiny vuelve a mirar qué salidas se ven (y calcula las de la pestaña la
+    // primera vez). Solo eso: un "shown" a secas lanza además el reajuste de
+    // todas las salidas, que redibujaba cada gráfico de la pestaña aunque
+    // tuviera el mismo tamaño. Los que de verdad cambiaron los reajusta
+    // graficos.js.
+    if (window.jQuery) {
+      window.jQuery(guardadas).trigger("hidden.sendOutputHiddenState");
+      window.jQuery(panel).trigger("shown.sendOutputHiddenState");
+    }
+    document.dispatchEvent(new CustomEvent("pestana-mostrada", { detail: { panel: panel } }));
+  }
+
   function ir(destino) {
     if (!destino || destino === actual) return;
     actual = destino;
     pintar(destino);
+    mostrar(destino);
     if (window.Shiny && Shiny.setInputValue) {
       Shiny.setInputValue("pestana", destino, { priority: "event" });
     }

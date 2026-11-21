@@ -49,6 +49,9 @@
 
   function animar(el) {
     if (el.dataset.contado) return;
+    // Shiny: las pestañas que no se ven esperan en #pestanas-guardadas. Se
+    // cuentan cuando llegan a la vista (el observador ve el cambio de sitio).
+    if (el.closest("#pestanas-guardadas")) return;
     el.dataset.contado = "1";
 
     var texto = el.textContent.trim();

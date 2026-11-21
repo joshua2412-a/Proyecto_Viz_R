@@ -1,8 +1,12 @@
 # =========================================================================== #
 # Interfaz: barra superior, navegación, contenido de la pestaña activa y pie
 #
-# La estructura es fija y el contenido se monta bajo demanda en server.R
-# (output$contenido): solo se construye la pestaña que se está viendo. Los
+# Todas las pestañas van en la página desde el principio (global.R las
+# construye una vez por proceso). La que se ve está en #contenido-pestana; las
+# demás esperan en #pestanas-guardadas, oculto, y www/navegacion.js las cambia
+# de sitio al instante, sin pedirle nada al servidor. Shiny no calcula las
+# salidas de lo que está oculto, así que los gráficos de una pestaña se envían
+# la primera vez que se abre y, al volver, siguen dibujados. Los
 # identificadores y las clases son los del tablero de Dash (#tabs-principal,
 # #contenido-pestana, .vista-pestana...), porque www/banda.js y el resto de
 # scripts compartidos los leen directamente.
@@ -42,8 +46,14 @@ bslib::page(
     tags$script(type = "text/x-mathjax-config", HTML(paste(
       "MathJax.Hub.Config({",
       "  tex2jax: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], processEscapes: true },",
-      "  'HTML-CSS': { linebreaks: { automatic: true } }, showMathMenu: false",
+      "  CommonHTML: { linebreaks: { automatic: true } }, showMathMenu: false,",
+      "  messageStyle: 'none'",
       "});", sep = "\n"))),
+    # MathJax con salida CommonHTML: compone varias veces más rápido que la
+    # salida HTML-CSS que trae withMathJax(), que congelaba la página al
+    # cambiar de pestaña. Se carga una sola vez aquí (las fórmulas de las
+    # pestañas las compone www/formulas.js).
+    tags$script(src = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS_CHTML", defer = NA),
     # Los scripts van con defer: corren cuando el documento ya está construido,
     # como en Dash, que los carga al final del <body>.
     tags$script(src = "tema.js", defer = NA),
@@ -57,11 +67,12 @@ bslib::page(
     tags$script(src = "enjambre.js", defer = NA),
     tags$script(src = "prediccion.js", defer = NA),
     tags$script(src = "formulas.js", defer = NA),
+    tags$script(src = "graficos.js", defer = NA),
+    htmltools::attachDependencies(tags$span(hidden = NA), DEPENDENCIAS_PLOTLY),
     # Glía, la asistente (el dibujo y la conversación)
     tags$script(src = "glia.js", defer = NA),
     tags$script(src = "asistente.js", defer = NA)
   ),
-  withMathJax(),
   div(
     class = "app-root",
     # Portada animada (www/intro.js): tapa el tablero hasta "Explorar el dashboard"
@@ -69,7 +80,11 @@ bslib::page(
     barra_superior(),
     barra_navegacion(),
     div(class = "container-fluid page-container",
-        div(id = "contenido-pestana", uiOutput("contenido"))),
+        div(id = "contenido-pestana", panel_pestana(TAB_INICIAL)),
+        # Las demás pestañas, ocultas (tex2jax_ignore: MathJax las compone
+        # cuando se abren, no al cargar)
+        div(id = "pestanas-guardadas", class = "tex2jax_ignore", hidden = NA,
+            lapply(setdiff(ORDEN, TAB_INICIAL), panel_pestana))),
     pie_pagina(),
     glia_ui(),
     datos_navegacion_js()

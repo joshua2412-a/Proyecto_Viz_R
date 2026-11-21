@@ -109,5 +109,5 @@ ui_problema <- function() {
 }
 
 server_problema <- function(input, output, session) {
-  output$fig_prob_prevalencia <- plotly::renderPlotly(fig_prevalencia_genes(AMBITO_EDA, top_n = 12))
+  output$fig_prob_prevalencia <- salida_figura_fija("prob_prevalencia")
 }

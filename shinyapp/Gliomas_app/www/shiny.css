@@ -58,6 +58,54 @@
   color: var(--ink);
 }
 
+/* Modo oscuro: los mismos colores que los dcc.Dropdown del tablero de Dash
+   (style.css, «Desplegables»). Sin esto, el selector quedaba blanco con el
+   texto claro del modo oscuro encima, casi invisible. */
+html[data-tema="oscuro"] .selectize-input,
+html[data-tema="oscuro"] .selectize-input.full,
+html[data-tema="oscuro"] .selectize-input.input-active,
+html[data-tema="oscuro"] .selectize-dropdown,
+html[data-tema="oscuro"] .selector-variable select.form-select,
+html[data-tema="oscuro"] .selector-variable select.form-control {
+  background: var(--bg-card) !important;
+  border-color: var(--hairline-strong) !important;
+  color: var(--ink) !important;
+}
+
+html[data-tema="oscuro"] .selectize-input > input,
+html[data-tema="oscuro"] .selectize-input .item {
+  color: var(--ink) !important;
+}
+
+html[data-tema="oscuro"] .selectize-input > input::placeholder {
+  color: var(--ink-muted) !important;
+}
+
+html[data-tema="oscuro"] .selectize-dropdown .option {
+  background: var(--bg-card);
+  color: var(--ink-soft);
+}
+
+html[data-tema="oscuro"] .selectize-dropdown .option.active,
+html[data-tema="oscuro"] .selectize-dropdown .option.selected {
+  background: var(--accent-tint);
+  color: var(--ink);
+}
+
+html[data-tema="oscuro"] .selectize-dropdown .optgroup-header {
+  background: var(--bg-card);
+  color: var(--ink-muted);
+}
+
+html[data-tema="oscuro"] .selectize-control.single .selectize-input::after {
+  border-top-color: var(--ink-muted) !important;
+}
+
+html[data-tema="oscuro"] .selectize-control.single .selectize-input.dropdown-active::after {
+  border-top-color: transparent !important;
+  border-bottom-color: var(--ink-muted) !important;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Botones de radio (.ambito-radio) como controles segmentados                 */
 /* Marcado de Shiny: label.radio-inline > input + span                         */
@@ -316,6 +364,27 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* actionButton envuelve el contenido en span.action-label, así que el texto y
+   la flecha no eran hijos directos del botón y el space-between de style.css
+   no los separaba: la flecha quedaba pegada a «Predecir». */
+.boton-predecir .action-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+/* Colores en línea en modo oscuro (veredicto, etiqueta GBM/LGG de los
+   mosaicos y franja de los KPI). style.css ya los cambia, pero busca el color
+   como lo escribe React (rgb(...)) y Shiny lo escribe en hexadecimal: sin esto
+   el veredicto quedaba en una pastilla clara con el texto claro encima. */
+html[data-tema="oscuro"] .veredicto[style*="#FCEEE9" i] { background: rgba(218, 116, 84, 0.16) !important; }
+html[data-tema="oscuro"] .veredicto[style*="#E8F0FB" i] { background: rgba(78, 140, 217, 0.16) !important; }
+html[data-tema="oscuro"] .veredicto[style*="#FBF3E0" i] { background: rgba(214, 160, 60, 0.16) !important; }
+html[data-tema="oscuro"] .prob-grado[style*="#B4512F" i] { color: #f0987a !important; }
+html[data-tema="oscuro"] .prob-grado[style*="#2F6DB8" i] { color: #8fb8f2 !important; }
+html[data-tema="oscuro"] .kpi-accent[style*="#141B4D" i] { background: var(--accent-texto) !important; }
 
 /* Las secciones de "Cómo decide" que no tocan quedan fuera del flujo */
 .shiny-panel-conditional:empty {

@@ -538,13 +538,13 @@ server_modelos <- function(input, output, session) {
   umbral <- reactive(if (is.null(input$mod_umbral)) 0.5 else input$mod_umbral)
 
   output$fig_mod_mapa <- plotly::renderPlotly(fig_combinaciones(if (is.null(input$mod_metrica)) "auc" else input$mod_metrica))
-  output$fig_mod_roc <- plotly::renderPlotly(fig_roc())
+  output$fig_mod_roc <- salida_figura_fija("mod_roc")
   output$fig_mod_matriz <- plotly::renderPlotly(fig_matriz_confusion(modelo(), umbral()))
   output$mod_matriz_stats <- renderUI(stats_matriz(modelo(), umbral()))
   output$fig_mod_calibracion <- plotly::renderPlotly(fig_calibracion(modelo()))
-  output$fig_mod_importancia <- plotly::renderPlotly(fig_importancia())
-  output$fig_mod_panel <- plotly::renderPlotly(fig_panel_reducido())
-  output$fig_mod_pliegues <- plotly::renderPlotly(fig_pliegues())
+  output$fig_mod_importancia <- salida_figura_fija("mod_importancia")
+  output$fig_mod_panel <- salida_figura_fija("mod_panel")
+  output$fig_mod_pliegues <- salida_figura_fija("mod_pliegues")
   output$fig_mod_anytime <- plotly::renderPlotly(
     fig_anytime(if (is.null(input$mod_anytime_modelo)) "xgboost" else input$mod_anytime_modelo)
   )

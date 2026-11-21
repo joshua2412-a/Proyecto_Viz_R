@@ -31,6 +31,12 @@ URL_LIBRO_MODELADO <- paste0(URL_LIBRO, "modelado.html")
 URL_REPO <- "https://github.com/joshua2412-a/Proyecto_Viz_R"
 URL_LIBRO_PY <- "https://joshua2412-a.github.io/Proyecto_Viz/"
 URL_DASH_PY <- "https://gliomas-dashboard-984926604434.us-central1.run.app"
+
+# Video del recorrido por el tablero (YouTube). Vale cualquier enlace de
+# YouTube: el de la barra de direcciones (watch?v=...), el corto de
+# «Compartir» (youtu.be/...) o el de un Short. Mientras esté vacío, la sección
+# del video no aparece en Introducción, así que se puede desplegar sin él.
+URL_VIDEO <- "https://youtu.be/BSiH4ggWeG8"
 URL_DATASET <- paste0(
   "https://archive.ics.uci.edu/dataset/759/",
   "glioma+grading+clinical+and+mutation+features+dataset"

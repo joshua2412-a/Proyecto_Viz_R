@@ -122,7 +122,7 @@ ui_contexto <- function() {
 }
 
 server_contexto <- function(input, output, session) {
-  output$fig_ctx_cohorte <- plotly::renderPlotly(fig_distribucion_grado(AMBITO_EDA))
-  output$fig_ctx_edad <- plotly::renderPlotly(fig_edad_por_grado(AMBITO_EDA))
-  output$fig_ctx_caja <- plotly::renderPlotly(fig_boxplot_edad(AMBITO_EDA))
+  output$fig_ctx_cohorte <- salida_figura_fija("ctx_cohorte")
+  output$fig_ctx_edad <- salida_figura_fija("ctx_edad")
+  output$fig_ctx_caja <- salida_figura_fija("ctx_caja")
 }

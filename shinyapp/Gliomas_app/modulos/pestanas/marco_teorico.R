@@ -31,7 +31,7 @@ ESTADISTICOS <- list(
           "en la práctica, simplemente porque casi nadie la tiene."))
 )
 
-formula <- function(tex) div(class = "formula-block", withMathJax(tex))
+formula <- function(tex) div(class = "formula-block", tex)
 
 marco_tabla_variables <- function() {
   data_table(

@@ -202,13 +202,13 @@ ui_resultados <- function() {
 }
 
 server_resultados <- function(input, output, session) {
-  output$fig_res_cohorte <- plotly::renderPlotly(fig_distribucion_grado("train"))
-  output$fig_res_edad <- plotly::renderPlotly(fig_edad_por_grado("train"))
-  output$fig_res_caja <- plotly::renderPlotly(fig_boxplot_edad("train"))
-  output$fig_res_genero <- plotly::renderPlotly(fig_clinica_por_grado("Gender", "train"))
-  output$fig_res_raza <- plotly::renderPlotly(fig_clinica_por_grado("Race", "train"))
-  output$fig_res_prevalencia <- plotly::renderPlotly(fig_prevalencia_genes("train", top_n = 12))
-  output$fig_res_asociacion <- plotly::renderPlotly(fig_asociacion_grado("train", top_n = 14))
-  output$fig_res_spearman <- plotly::renderPlotly(fig_matriz_spearman("train"))
-  output$fig_res_genes <- plotly::renderPlotly(fig_matriz_genes("train", top_n = 12))
+  output$fig_res_cohorte <- salida_figura_fija("res_cohorte")
+  output$fig_res_edad <- salida_figura_fija("res_edad")
+  output$fig_res_caja <- salida_figura_fija("res_caja")
+  output$fig_res_genero <- salida_figura_fija("res_genero")
+  output$fig_res_raza <- salida_figura_fija("res_raza")
+  output$fig_res_prevalencia <- salida_figura_fija("res_prevalencia")
+  output$fig_res_asociacion <- salida_figura_fija("res_asociacion")
+  output$fig_res_spearman <- salida_figura_fija("res_spearman")
+  output$fig_res_genes <- salida_figura_fija("res_genes")
 }

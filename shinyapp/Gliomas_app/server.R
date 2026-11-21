@@ -2,8 +2,10 @@
 # Servidor: enruta la pestaña activa y registra las salidas de cada pestaña
 #
 # input$pestana lo envía www/navegacion.js al pulsar cualquier elemento con
-# data-ir="tab-...". Las salidas de todas las pestañas se registran una vez;
-# Shiny solo calcula las que están en pantalla.
+# data-ir="tab-...". El cambio de pestaña ya lo hizo el navegador (todas están
+# en la página, ver ui.R): aquí solo se anota cuál es, para Glía y Predicción.
+# Las salidas de todas las pestañas se registran una vez; Shiny solo calcula
+# las que están en pantalla.
 # =========================================================================== #
 
 function(input, output, session) {
@@ -11,11 +13,6 @@ function(input, output, session) {
 
   observeEvent(input$pestana, {
     if (input$pestana %in% ORDEN) pestana(input$pestana)
-  })
-
-  output$contenido <- renderUI({
-    constructor <- CONSTRUCTORES[[pestana()]]
-    tryCatch(constructor(), error = aviso_error)
   })
 
   server_contexto(input, output, session)

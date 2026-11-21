@@ -5161,3 +5161,29 @@ body:has(.dash-debug-menu) .asistente-panel { height: min(660px, calc(100dvh - 1
   border-radius: 4px;
 }
 
+
+
+/* -------------------------------------------------------------------------- */
+/* Video del recorrido (Introducción)                                         */
+/* -------------------------------------------------------------------------- */
+/* Marco 16:9 que escala con el ancho; el máximo evita un video de pantalla
+   completa en monitores anchos. El fondo azul noche es lo que se ve mientras
+   carga, en los dos modos. */
+.video-marco {
+  position: relative;
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #0b1730;
+}
+
+.video-iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}

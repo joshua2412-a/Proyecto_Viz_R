@@ -77,6 +77,45 @@ intro_tira_documentacion <- function() {
   )
 }
 
+# Identificador de 11 caracteres de un video en cualquiera de las formas de
+# enlace que da YouTube (watch?v=, youtu.be/, shorts/, embed/, live/).
+id_youtube <- function(url) {
+  if (is.null(url) || !nzchar(url)) return(NULL)
+  patron <- paste0("(youtu\\.be/|youtube(-nocookie)?\\.com/",
+                   "(watch\\?(.*&)?v=|embed/|shorts/|live/))([A-Za-z0-9_-]{11})")
+  m <- regmatches(url, regexec(patron, url, perl = TRUE))[[1]]
+  if (length(m) == 0) NULL else m[length(m)]
+}
+
+# El recorrido del tablero en video, embebido como el libro en Documentación.
+# Devuelve NULL mientras URL_VIDEO no tenga un enlace válido: así la sección no
+# aparece a medias en el despliegue. Se usa el dominio youtube-nocookie, que no
+# deja cookies hasta que se reproduce el video.
+intro_seccion_video <- function() {
+  video <- id_youtube(URL_VIDEO)
+  if (is.null(video)) return(NULL)
+  tagList(
+    section_title("El tablero en video"),
+    card(
+      div(
+        class = "video-marco",
+        tags$iframe(
+          src = paste0("https://www.youtube-nocookie.com/embed/", video, "?rel=0"),
+          title = "Recorrido por el tablero en video",
+          allow = paste("accelerometer; clipboard-write; encrypted-media;",
+                        "gyroscope; picture-in-picture; fullscreen"),
+          class = "video-iframe"
+        )
+      ),
+      div(class = "graph-note mt-2",
+          "Si el video no carga en este marco, ábrelo en YouTube: ",
+          enlace_externo("ver el recorrido", URL_VIDEO)),
+      titulo = "Recorrido por el tablero",
+      subtitulo = "Los autores explican cada pestaña, de la introducción a las conclusiones"
+    )
+  )
+}
+
 intro_ficha_dataset <- function() {
   card(
     bullet_list(list(
@@ -139,6 +178,7 @@ ui_introduccion <- function() {
         columna(intro_bloque(bloque), xl = 3, md = 6, xs = 12, class = "mb-3")
       })
     ),
+    intro_seccion_video(),
     intro_tira_documentacion()
   )
 }
